@@ -8,41 +8,9 @@ import re
 from typing import Optional
 from pathlib import Path
 import secrets
-from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
-
-
-class SimpleRateLimiter:
-    """Simple in-memory rate limiter for IP addresses"""
-    
-    def __init__(self, requests_per_minute: int = 100):
-        self.requests_per_minute = requests_per_minute
-        self.requests = defaultdict(list)
-    
-    def is_allowed(self, ip: str) -> bool:
-        """Check if IP is allowed to make a request"""
-        now = datetime.utcnow()
-        minute_ago = now - timedelta(minutes=1)
-        
-        # Clean old requests
-        self.requests[ip] = [
-            req_time for req_time in self.requests[ip]
-            if req_time > minute_ago
-        ]
-        
-        # Check if limit exceeded
-        if len(self.requests[ip]) >= self.requests_per_minute:
-            return False
-        
-        # Add current request
-        self.requests[ip].append(now)
-        return True
-
-
-# Global rate limiter instance
-rate_limiter = SimpleRateLimiter(requests_per_minute=100)
 
 
 
@@ -108,12 +76,12 @@ class FileSecurityValidator:
     @staticmethod
     def _verify_file_signature(file_bytes: bytes) -> bool:
         """Verify file magic number"""
-        if not file_bytes or len(file_bytes) < 4:
+        if not file_bytes:
             return False
         
         # Check each known signature
         for signature, file_type in FileSecurityValidator.FILE_SIGNATURES.items():
-            if file_bytes.startswith(signature):
+            if len(file_bytes) >= len(signature) and file_bytes.startswith(signature):
                 return True
         
         return False
@@ -139,7 +107,7 @@ class FileSecurityValidator:
                 if pattern.lower() in content.lower():
                     logger.warning(f"Suspicious pattern detected: {pattern}")
                     return True
-        except:
+        except Exception:
             pass
         
         return False
@@ -166,7 +134,7 @@ class InputSanitizer:
     """Sanitize user inputs"""
     
     @staticmethod
-    def sanitize_string(value: str, max_length: int = 500) -> str:
+    def sanitize_string(value: Optional[str], max_length: int = 500) -> str:
         """
         Sanitize string input
         Remove special characters that could cause injection
@@ -182,6 +150,11 @@ class InputSanitizer:
         
         # Remove control characters
         value = ''.join(char for char in value if ord(char) >= 32 or char == '\n')
+        
+        # Remove path traversal sequences
+        import re as _re
+        value = _re.sub(r'\.\.[/\\]', '', value)
+        value = _re.sub(r'[/\\]\.\.', '', value)
         
         return value.strip()
     
@@ -320,3 +293,14 @@ def log_security_event(event_type: str, details: dict, severity: str = "INFO"):
         getattr(logging, severity),
         f"SECURITY_EVENT: {event_type} | Details: {details}"
     )
+
+
+# FastAPI dependency for API key verification
+from fastapi import Header, HTTPException
+
+def verify_api_key(x_api_key: Optional[str] = Header(None)) -> None:
+    """Verify API key from header"""
+    from backend.config.settings import settings
+    if x_api_key != settings.API_KEY:
+        log_security_event("INVALID_API_KEY", {"provided_key": x_api_key[:8] if x_api_key else None}, "WARNING")
+        raise HTTPException(status_code=401, detail="Invalid API key")

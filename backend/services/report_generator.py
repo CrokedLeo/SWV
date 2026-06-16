@@ -177,7 +177,8 @@ class ReportGenerator:
             margin: 20px 0;
             color: white;
         }}
-        .aqi-good {{ background-color: #2ecc71; }}
+        .aqi-excellent {{ background-color: #2ecc71; }}
+        .aqi-good {{ background-color: #8bc34a; }}
         .aqi-moderate {{ background-color: #f39c12; }}
         .aqi-poor {{ background-color: #e74c3c; }}
         .aqi-hazardous {{ background-color: #8b0000; }}
@@ -359,13 +360,15 @@ class ReportGenerator:
     def _get_aqi_class(aqi_value: int) -> str:
         """Get CSS class for AQI indicator"""
         if aqi_value <= 50:
-            return "good"
+            return "excellent"
         elif aqi_value <= 100:
-            return "moderate"
+            return "good"
         elif aqi_value <= 150:
             return "moderate"
+        elif aqi_value <= 200:
+            return "poor"
         else:
-            return "poor" if aqi_value <= 200 else "hazardous"
+            return "hazardous"
     
     @staticmethod
     def export_to_json(report: EnvironmentalReport) -> Dict[str, Any]:

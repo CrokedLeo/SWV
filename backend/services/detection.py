@@ -26,16 +26,21 @@ class YOLODetector:
             cls._instance = super().__new__(cls)
         return cls._instance
     
+    _model_name: str = ""
+    
     def __init__(self, model_name: str = "yolov8n.pt"):
         """Initialize YOLO detector (singleton pattern)"""
         if self._model is None:
             logger.info(f"Loading YOLO model: {model_name}")
             try:
                 self._model = YOLO(model_name)
+                self._model_name = model_name
                 logger.info(f"Model {model_name} loaded successfully")
             except Exception as e:
                 logger.error(f"Failed to load model: {e}")
                 raise
+        elif self._model_name != model_name:
+            logger.warning(f"Ignoring model change request: {model_name} (already loaded {self._model_name})")
     
     def detect(self, image: np.ndarray, conf: float = 0.5) -> Tuple[List[dict], float, Tuple[int, int]]:
         """

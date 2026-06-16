@@ -16,8 +16,9 @@ class TestFileSecurityValidator:
     """Test FileSecurityValidator class"""
     
     @pytest.mark.unit
-    def test_validate_valid_jpeg_file(self, clean_jpeg_bytes := b'\xFF\xD8\xFF' + b'JPEG_DATA' * 100):
+    def test_validate_valid_jpeg_file(self):
         """Test validation of valid JPEG file"""
+        clean_jpeg_bytes = b'\xFF\xD8\xFF' + b'JPEG_DATA' * 100
         is_valid, error = FileSecurityValidator.validate_file(
             clean_jpeg_bytes, "image.jpg"
         )
@@ -77,15 +78,14 @@ class TestFileSecurityValidator:
         assert "No filename provided" in error
     
     @pytest.mark.unit
-    def test_file_signature_mismatch(self):
-        """Test file signature mismatch detection"""
-        # JPEG header but PNG extension
+    def test_file_signature_takes_precedence_over_extension(self):
+        """Test file signature is validated over extension"""
+        # JPEG content with non-matching PNG extension — should validate by content
         jpeg_data = b'\xFF\xD8\xFF' + b'DATA' * 100
         is_valid, error = FileSecurityValidator.validate_file(
             jpeg_data, "image.png"
         )
-        # Should still validate if magic numbers match
-        assert is_valid  # Because content starts with JPEG signature
+        assert is_valid
     
     @pytest.mark.unit
     def test_file_with_embedded_script(self):

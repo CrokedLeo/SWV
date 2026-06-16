@@ -5,21 +5,14 @@ import logging
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Depends, Header
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, HTTPException, Depends
 
 from backend.config.settings import settings
 from backend.services.cache import cache_manager, rate_limiter, perf_monitor
+from backend.security import verify_api_key
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1", tags=["monitoring"])
-
-
-def verify_api_key(x_api_key: Optional[str] = Header(None)) -> None:
-    """Verify API key from header"""
-    if settings.API_KEY != "your-secret-key-change-in-production":
-        if x_api_key != settings.API_KEY:
-            raise HTTPException(status_code=401, detail="Invalid API key")
 
 
 @router.get("/monitor/cache-stats")

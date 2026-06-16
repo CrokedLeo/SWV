@@ -5,6 +5,7 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.location.Address
 import android.location.Geocoder
+import android.os.Handler
 import android.os.Looper
 import com.google.android.gms.location.*
 import com.google.android.gms.tasks.Task
@@ -12,8 +13,12 @@ import com.swv.api.models.GeoLocation
 import com.swv.utils.Constants
 import com.swv.utils.PermissionUtils
 import java.util.Locale
+import java.util.concurrent.Executors
 
 class LocationService(private val context: Context) {
+
+    private val backgroundExecutor = Executors.newSingleThreadExecutor()
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     private val fusedLocationClient: FusedLocationProviderClient =
         LocationServices.getFusedLocationProviderClient(context)
@@ -74,9 +79,9 @@ class LocationService(private val context: Context) {
                 locationCallback,
                 Looper.getMainLooper()
             ).addOnCompleteListener { task ->
-                if (task.isSuccessful && lastKnownLocation != null) {
-                    stopLocationUpdates()
-                    val loc = lastKnownLocation!!
+                stopLocationUpdates()
+                val loc = lastKnownLocation
+                if (task.isSuccessful && loc != null) {
                     resolveAddress(loc, callback)
                 } else {
                     callback(lastKnownLocation)
@@ -88,27 +93,29 @@ class LocationService(private val context: Context) {
     }
 
     private fun resolveAddress(geoLocation: GeoLocation, callback: (GeoLocation) -> Unit) {
-        try {
-            val geocoder = Geocoder(context, Locale.getDefault())
-            val addresses: List<Address>? = geocoder.getFromLocation(
-                geoLocation.latitude,
-                geoLocation.longitude,
-                1
-            )
-            val enriched = if (!addresses.isNullOrEmpty()) {
-                val addr = addresses[0]
-                geoLocation.copy(
-                    address = addr.getAddressLine(0),
-                    country = addr.countryName,
-                    region = addr.adminArea,
-                    city = addr.locality
+        backgroundExecutor.execute {
+            try {
+                val geocoder = Geocoder(context, Locale.getDefault())
+                val addresses: List<Address>? = geocoder.getFromLocation(
+                    geoLocation.latitude,
+                    geoLocation.longitude,
+                    1
                 )
-            } else {
-                geoLocation
+                val enriched = if (!addresses.isNullOrEmpty()) {
+                    val addr = addresses[0]
+                    geoLocation.copy(
+                        address = addr.getAddressLine(0),
+                        country = addr.countryName,
+                        region = addr.adminArea,
+                        city = addr.locality
+                    )
+                } else {
+                    geoLocation
+                }
+                mainHandler.post { callback(enriched) }
+            } catch (e: Exception) {
+                mainHandler.post { callback(geoLocation) }
             }
-            callback(enriched)
-        } catch (e: Exception) {
-            callback(geoLocation)
         }
     }
 

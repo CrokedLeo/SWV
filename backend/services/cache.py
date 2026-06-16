@@ -3,6 +3,8 @@ Caching and performance optimization service
 """
 import logging
 import time
+import inspect
+import threading
 from typing import Optional, Callable, Any
 from functools import wraps
 from datetime import datetime, timedelta
@@ -32,50 +34,55 @@ class CacheEntry:
 
 
 class SimpleCache:
-    """Simple in-memory cache with TTL"""
+    """Simple in-memory cache with TTL (thread-safe)"""
     
     def __init__(self, max_size: int = 1000):
         self.cache: dict = {}
         self.max_size = max_size
+        self._lock = threading.Lock()
     
     def set(self, key: str, value: Any, ttl_seconds: int = 3600):
         """Set cache entry"""
-        if len(self.cache) >= self.max_size:
-            # Remove oldest expired entry
-            self._cleanup_expired()
-        
-        self.cache[key] = CacheEntry(value, ttl_seconds)
-        logger.debug(f"Cache SET: {key} (TTL: {ttl_seconds}s)")
+        with self._lock:
+            if len(self.cache) >= self.max_size:
+                # Remove oldest expired entry
+                self._cleanup_expired()
+            
+            self.cache[key] = CacheEntry(value, ttl_seconds)
+            logger.debug(f"Cache SET: {key} (TTL: {ttl_seconds}s)")
     
     def get(self, key: str) -> Optional[Any]:
         """Get cache entry if not expired"""
-        if key not in self.cache:
-            return None
-        
-        entry = self.cache[key]
-        value = entry.get_value()
-        
-        if value is None:
-            del self.cache[key]
-            logger.debug(f"Cache HIT (expired): {key}")
-            return None
-        
-        logger.debug(f"Cache HIT: {key}")
-        return value
+        with self._lock:
+            if key not in self.cache:
+                return None
+            
+            entry = self.cache[key]
+            value = entry.get_value()
+            
+            if value is None:
+                del self.cache[key]
+                logger.debug(f"Cache HIT (expired): {key}")
+                return None
+            
+            logger.debug(f"Cache HIT: {key}")
+            return value
     
     def invalidate(self, key: str):
         """Invalidate cache entry"""
-        if key in self.cache:
-            del self.cache[key]
-            logger.debug(f"Cache INVALIDATE: {key}")
+        with self._lock:
+            if key in self.cache:
+                del self.cache[key]
+                logger.debug(f"Cache INVALIDATE: {key}")
     
     def clear(self):
         """Clear all cache"""
-        self.cache.clear()
-        logger.info("Cache cleared")
+        with self._lock:
+            self.cache.clear()
+            logger.info("Cache cleared")
     
     def _cleanup_expired(self):
-        """Remove expired entries"""
+        """Remove expired entries (caller must hold _lock)"""
         expired_keys = [k for k, v in self.cache.items() if v.is_expired()]
         for key in expired_keys:
             del self.cache[key]
@@ -83,12 +90,13 @@ class SimpleCache:
     
     def stats(self) -> dict:
         """Get cache statistics"""
-        self._cleanup_expired()
-        return {
-            "total_entries": len(self.cache),
-            "max_size": self.max_size,
-            "usage_percent": (len(self.cache) / self.max_size) * 100
-        }
+        with self._lock:
+            self._cleanup_expired()
+            return {
+                "total_entries": len(self.cache),
+                "max_size": self.max_size,
+                "usage_percent": (len(self.cache) / self.max_size) * 100
+            }
 
 
 class CacheManager:
@@ -96,11 +104,14 @@ class CacheManager:
     
     # Singleton instance
     _instance = None
+    _lock = threading.Lock()
     
     def __new__(cls):
         if cls._instance is None:
-            cls._instance = super().__new__(cls)
-            cls._instance.cache = SimpleCache(max_size=1000)
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+                    cls._instance.cache = SimpleCache(max_size=1000)
         return cls._instance
     
     @staticmethod
@@ -142,85 +153,93 @@ class CacheManager:
 
 
 class RateLimiter:
-    """Simple rate limiting"""
+    """Simple rate limiting (thread-safe)"""
     
     def __init__(self, max_requests: int = 100, window_seconds: int = 60):
         self.max_requests = max_requests
         self.window_seconds = window_seconds
         self.requests: dict = {}
+        self._lock = threading.Lock()
     
     def is_allowed(self, identifier: str) -> bool:
         """Check if request is allowed"""
         now = datetime.utcnow().timestamp()
         
-        if identifier not in self.requests:
-            self.requests[identifier] = []
-        
-        # Remove old requests outside window
-        self.requests[identifier] = [
-            req_time for req_time in self.requests[identifier]
-            if now - req_time < self.window_seconds
-        ]
-        
-        # Check if limit exceeded
-        if len(self.requests[identifier]) >= self.max_requests:
-            logger.warning(f"Rate limit exceeded for {identifier}")
-            return False
-        
-        # Add new request
-        self.requests[identifier].append(now)
-        return True
+        with self._lock:
+            if identifier not in self.requests:
+                self.requests[identifier] = []
+            
+            # Remove old requests outside window
+            self.requests[identifier] = [
+                req_time for req_time in self.requests[identifier]
+                if now - req_time < self.window_seconds
+            ]
+            
+            # Check if limit exceeded
+            if len(self.requests[identifier]) >= self.max_requests:
+                logger.warning(f"Rate limit exceeded for {identifier}")
+                return False
+            
+            # Add new request
+            self.requests[identifier].append(now)
+            return True
     
     def get_remaining(self, identifier: str) -> int:
         """Get remaining requests in window"""
         now = datetime.utcnow().timestamp()
         
-        if identifier not in self.requests:
-            return self.max_requests
-        
-        # Remove old requests
-        self.requests[identifier] = [
-            req_time for req_time in self.requests[identifier]
-            if now - req_time < self.window_seconds
-        ]
-        
-        return max(0, self.max_requests - len(self.requests[identifier]))
+        with self._lock:
+            if identifier not in self.requests:
+                return self.max_requests
+            
+            # Remove old requests
+            self.requests[identifier] = [
+                req_time for req_time in self.requests[identifier]
+                if now - req_time < self.window_seconds
+            ]
+            
+            return max(0, self.max_requests - len(self.requests[identifier]))
 
 
 class PerformanceMonitor:
-    """Monitor endpoint performance"""
+    """Monitor endpoint performance (thread-safe)"""
     
     def __init__(self):
         self.metrics: dict = {}
+        self._lock = threading.Lock()
     
     def record(self, endpoint: str, duration_ms: float, success: bool = True):
         """Record endpoint call"""
-        if endpoint not in self.metrics:
-            self.metrics[endpoint] = {
-                "calls": 0,
-                "total_time": 0,
-                "avg_time": 0,
-                "min_time": float('inf'),
-                "max_time": 0,
-                "errors": 0
-            }
-        
-        m = self.metrics[endpoint]
-        m["calls"] += 1
-        m["total_time"] += duration_ms
-        m["avg_time"] = m["total_time"] / m["calls"]
-        m["min_time"] = min(m["min_time"], duration_ms)
-        m["max_time"] = max(m["max_time"], duration_ms)
-        if not success:
-            m["errors"] += 1
+        with self._lock:
+            if endpoint not in self.metrics:
+                self.metrics[endpoint] = {
+                    "calls": 0,
+                    "total_time": 0,
+                    "avg_time": 0,
+                    "min_time": float('inf'),
+                    "max_time": 0,
+                    "errors": 0
+                }
+            
+            m = self.metrics[endpoint]
+            m["calls"] += 1
+            m["total_time"] += duration_ms
+            m["avg_time"] = m["total_time"] / m["calls"]
+            m["min_time"] = min(m["min_time"], duration_ms)
+            m["max_time"] = max(m["max_time"], duration_ms)
+            if not success:
+                m["errors"] += 1
     
     def get_stats(self) -> dict:
         """Get all metrics"""
-        return self.metrics
+        with self._lock:
+            return dict(self.metrics)
     
     def get_endpoint_stats(self, endpoint: str) -> Optional[dict]:
         """Get stats for specific endpoint"""
-        return self.metrics.get(endpoint)
+        with self._lock:
+            m = self.metrics.get(endpoint)
+            return dict(m) if m else None
 
 
 # Global instances
@@ -257,6 +276,6 @@ def timed_operation(func):
             perf_monitor.record(func.__name__, duration, success=False)
             raise
     
-    if hasattr(func, '__await__'):
+    if inspect.iscoroutinefunction(func):
         return async_wrapper
     return sync_wrapper

@@ -29,7 +29,6 @@ object ApiClient {
             .addInterceptor { chain ->
                 val request = chain.request().newBuilder()
                     .addHeader("X-API-Key", apiKey)
-                    .addHeader("Content-Type", "multipart/form-data")
                     .build()
                 chain.proceed(request)
             }

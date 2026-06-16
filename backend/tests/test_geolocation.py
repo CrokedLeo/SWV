@@ -151,7 +151,7 @@ class TestGeolocationService:
 class TestWeatherService:
     """Test WeatherService class"""
     
-    @pytest.mark.async
+    @pytest.mark.async_test
     @pytest.mark.unit
     async def test_get_weather_data_success(self):
         """Test successful weather data retrieval"""
@@ -180,7 +180,7 @@ class TestWeatherService:
                 assert result.temperature == 22.5
                 assert result.humidity == 65.0
     
-    @pytest.mark.async
+    @pytest.mark.async_test
     @pytest.mark.unit
     async def test_get_weather_data_api_error(self):
         """Test weather API error handling"""
@@ -197,7 +197,7 @@ class TestWeatherService:
                 
                 assert result is None
     
-    @pytest.mark.async
+    @pytest.mark.async_test
     @pytest.mark.unit
     async def test_get_aqi_data_success(self):
         """Test successful AQI data retrieval"""
@@ -224,7 +224,7 @@ class TestWeatherService:
             assert result is not None
             assert result["aqi"] == 85
     
-    @pytest.mark.async
+    @pytest.mark.async_test
     @pytest.mark.unit
     async def test_get_aqi_data_no_token(self):
         """Test AQI data retrieval without token"""
@@ -232,7 +232,7 @@ class TestWeatherService:
         
         assert result is None
     
-    @pytest.mark.async
+    @pytest.mark.async_test
     @pytest.mark.unit
     async def test_get_aqi_data_non_ok_status(self):
         """Test AQI data with non-ok status"""
@@ -268,7 +268,7 @@ class TestEnvironmentalDataService:
         assert service.weather_service is not None
         assert service.aqi_token == "test_token"
     
-    @pytest.mark.async
+    @pytest.mark.async_test
     @pytest.mark.unit
     async def test_get_complete_environmental_data(self):
         """Test getting complete environmental data"""
@@ -295,7 +295,7 @@ class TestEnvironmentalDataService:
                     assert env.temperature == 22.5
                     assert aqi["aqi"] == 85
     
-    @pytest.mark.async
+    @pytest.mark.async_test
     @pytest.mark.unit
     async def test_get_complete_environmental_data_with_error(self):
         """Test error handling in complete environmental data"""
@@ -367,19 +367,22 @@ class TestGeolocationCaching:
     @pytest.mark.unit
     def test_cache_hit_rate(self):
         """Test cache hit rate improvement"""
-        call_count = 0
-        
         with patch('backend.services.geolocation.cache_manager') as mock_cache:
-            # First call - cache miss
             mock_cache.get_cached_geolocation.return_value = None
             
-            # Second call - cache hit
-            mock_cache.get_cached_geolocation.return_value = GeoLocation(
-                latitude=43.7701, longitude=11.2556
-            )
-            
-            with patch('backend.services.geolocation.Nominatim'):
-                service = GeolocationService()
+            with patch('backend.services.geolocation.Nominatim') as mock_nominatim:
+                mock_geocoder = Mock()
+                mock_geocoder.reverse.return_value = Mock(
+                    address="Via dell'Oriuolo, Firenze, Tuscany, Italy"
+                )
+                mock_nominatim.return_value = mock_geocoder
                 
-                # Should call both cache check and geocoder
-                assert mock_cache.get_cached_geolocation.call_count == 0
+                service = GeolocationService()
+                service.geocoder = mock_geocoder
+                
+                # First call - cache miss, should call geocoder and cache the result
+                mock_cache.get_cached_geolocation.return_value = None
+                result = service.get_address_from_coordinates(43.7701, 11.2556)
+                
+                assert mock_cache.get_cached_geolocation.call_count >= 1
+                assert result.city == "Firenze"

@@ -29,12 +29,6 @@ def main():
         # Create all tables
         init_db()
         
-        # Verify tables were created
-        inspector_query = """
-        SELECT name FROM sqlite_master 
-        WHERE type='table' AND name NOT LIKE 'sqlite_%';
-        """
-        
         logger.info("Created tables:")
         logger.info("  - HistoricalReport")
         logger.info("  - PollutantReading")

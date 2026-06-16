@@ -33,7 +33,7 @@ def pytest_configure(config):
         "markers", "slow: mark test as slow"
     )
     config.addinivalue_line(
-        "markers", "async: mark test as async"
+        "markers", "async_test: mark test as async"
     )
 
 
@@ -44,13 +44,6 @@ def test_client():
     """Create FastAPI test client"""
     return TestClient(app)
 
-
-@pytest.fixture
-def async_client():
-    """Create async event loop for async tests"""
-    loop = asyncio.get_event_loop_policy().new_event_loop()
-    yield loop
-    loop.close()
 
 
 # ============= CACHE FIXTURES =============

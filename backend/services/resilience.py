@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import Enum
 import random
+import contextlib
 
 logger = logging.getLogger(__name__)
 
@@ -159,6 +160,14 @@ class CircuitBreaker:
         
         # Track state per endpoint
         self.states: Dict[str, CircuitBreakerState] = {}
+        self._endpoint_locks: Dict[str, asyncio.Lock] = {}
+        self._lock: asyncio.Lock = asyncio.Lock()
+    
+    def _get_lock(self, endpoint: str) -> asyncio.Lock:
+        """Get or create per-endpoint lock to prevent concurrent state mutation"""
+        if endpoint not in self._endpoint_locks:
+            self._endpoint_locks[endpoint] = asyncio.Lock()
+        return self._endpoint_locks[endpoint]
     
     def _get_state(self, endpoint: str) -> CircuitBreakerState:
         """Get or create state for endpoint"""
@@ -264,20 +273,19 @@ class CircuitBreaker:
             RuntimeError if circuit is open
             Exception from func if execution fails
         """
-        if not self.can_execute(endpoint):
-            raise RuntimeError(
-                f"Circuit breaker is OPEN for {endpoint}. "
-                f"Service unavailable. Retry after {self.recovery_timeout_seconds}s"
-            )
-        
-        try:
-            result = await func(*args, **kwargs)
-            self.record_success(endpoint)
-            return result
-        
-        except Exception as e:
-            self.record_failure(endpoint)
-            raise
+        async with self._get_lock(endpoint):
+            if not self.can_execute(endpoint):
+                raise RuntimeError(
+                    f"Circuit breaker is OPEN for {endpoint}. "
+                    f"Service unavailable. Retry after {self.recovery_timeout_seconds}s"
+                )
+            try:
+                result = await func(*args, **kwargs)
+                self.record_success(endpoint)
+                return result
+            except Exception as e:
+                self.record_failure(endpoint)
+                raise
 
 
 class ErrorRecovery:

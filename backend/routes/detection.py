@@ -6,22 +6,15 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Header
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, UploadFile, File, HTTPException, Depends
 
 from backend.config.settings import settings
-from backend.models.schemas import DetectionResponse, DetectionBox, ErrorResponse, HealthResponse
+from backend.models.schemas import DetectionResponse, DetectionBox
 from backend.services.detection import get_detector, ImageProcessor
+from backend.security import verify_api_key, FileSecurityValidator
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1", tags=["detection"])
-
-
-def verify_api_key(x_api_key: Optional[str] = Header(None)) -> None:
-    """Verify API key from header"""
-    if settings.API_KEY != "your-secret-key-change-in-production":
-        if x_api_key != settings.API_KEY:
-            raise HTTPException(status_code=401, detail="Invalid API key")
 
 
 @router.post("/detect", response_model=DetectionResponse)
@@ -60,6 +53,11 @@ async def detect_objects(
                 detail=f"File too large. Maximum size: {settings.MAX_UPLOAD_SIZE / (1024*1024):.1f}MB"
             )
         
+        # Validate file signature (magic numbers)
+        is_valid, error_msg = FileSecurityValidator.validate_file(contents, file.filename or "")
+        if not is_valid:
+            raise HTTPException(status_code=400, detail=error_msg)
+        
         # Load and process image
         image = ImageProcessor.load_from_bytes(contents)
         image = ImageProcessor.resize_image(image)
@@ -93,16 +91,6 @@ async def detect_objects(
             status_code=500,
             detail=f"Detection failed: {str(e)}"
         )
-
-
-@router.get("/health", response_model=HealthResponse)
-async def health_check() -> HealthResponse:
-    """Health check endpoint"""
-    return HealthResponse(
-        status="healthy",
-        version=settings.APP_VERSION,
-        timestamp=datetime.utcnow()
-    )
 
 
 @router.get("/info")
@@ -140,6 +128,12 @@ async def batch_detect(
                 
                 contents = await file.read()
                 if len(contents) > settings.MAX_UPLOAD_SIZE:
+                    continue
+                
+                # Validate file signature (magic numbers)
+                is_valid, error_msg = FileSecurityValidator.validate_file(contents, file.filename or "")
+                if not is_valid:
+                    logger.warning(f"Batch detection: skipping invalid file {file.filename}: {error_msg}")
                     continue
                 
                 image = ImageProcessor.load_from_bytes(contents)

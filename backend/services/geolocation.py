@@ -21,11 +21,29 @@ from backend.services.resilience import (
 logger = logging.getLogger(__name__)
 
 
+# Module-level lazy singleton geocoder (avoids creating a new Nominatim() per request)
+_geocoder: Optional["Nominatim"] = None
+_http_session: Optional[aiohttp.ClientSession] = None
+
+def _get_geocoder() -> "Nominatim":
+    global _geocoder
+    if _geocoder is None:
+        _geocoder = Nominatim(user_agent="swv_air_quality_monitor")
+    return _geocoder
+
+def _get_http_session() -> aiohttp.ClientSession:
+    """Get or create reusable HTTP session for all API calls"""
+    global _http_session
+    if _http_session is None or _http_session.closed:
+        _http_session = aiohttp.ClientSession()
+    return _http_session
+
+
 class GeolocationService:
     """Handle geolocation and reverse geocoding"""
     
     def __init__(self):
-        self.geocoder = Nominatim(user_agent="swv_air_quality_monitor")
+        self.geocoder = _get_geocoder()
     
     def get_address_from_coordinates(
         self, 
@@ -88,17 +106,28 @@ class GeolocationService:
     @staticmethod
     def _extract_region(address: str) -> Optional[str]:
         """Extract region/state from address string"""
-        parts = address.split(",")
-        if len(parts) >= 3:
-            return parts[-2].strip()
+        parts = [p.strip() for p in address.split(",")]
+        if len(parts) >= 4:
+            # "HouseNo, Street, City, Region, Country"
+            return parts[-2]
+        elif len(parts) == 3:
+            # "Street, City, Country" — no region in 3-part addresses
+            return None
         return None
     
     @staticmethod
     def _extract_city(address: str) -> Optional[str]:
         """Extract city from address string"""
-        parts = address.split(",")
-        if len(parts) >= 2:
-            return parts[-3].strip() if len(parts) >= 3 else parts[0].strip()
+        parts = [p.strip() for p in address.split(",")]
+        if len(parts) >= 4:
+            # "HouseNo, Street, City, Province/State, Country"
+            return parts[-3]
+        elif len(parts) == 3:
+            # "Street, City, Country"
+            return parts[1]
+        elif len(parts) == 2:
+            # "City, Country"
+            return parts[0]
         return None
     
     @staticmethod
@@ -152,27 +181,27 @@ class WeatherService:
             "timezone": "auto"
         }
         
-        async with aiohttp.ClientSession() as session:
-            async with session.get(
-                WeatherService.OPEN_METEO_API, 
-                params=params, 
-                timeout=aiohttp.ClientTimeout(total=10)
-            ) as response:
-                if response.status != 200:
-                    logger.warning(f"Weather API returned {response.status}")
-                    raise Exception(f"Weather API returned {response.status}")
-                
-                data = await response.json()
-                current = data.get("current", {})
-                
-                env_data = EnvironmentalData(
-                    temperature=current.get("temperature_2m"),
-                    humidity=current.get("relative_humidity_2m"),
-                    wind_speed=current.get("wind_speed_10m"),
-                    visibility=current.get("visibility")
-                )
-                
-                return env_data
+        session = _get_http_session()
+        async with session.get(
+            WeatherService.OPEN_METEO_API, 
+            params=params, 
+            timeout=aiohttp.ClientTimeout(total=10)
+        ) as response:
+            if response.status != 200:
+                logger.warning(f"Weather API returned {response.status}")
+                raise Exception(f"Weather API returned {response.status}")
+            
+            data = await response.json()
+            current = data.get("current", {})
+            
+            env_data = EnvironmentalData(
+                temperature=current.get("temperature_2m"),
+                humidity=current.get("relative_humidity_2m"),
+                wind_speed=current.get("wind_speed_10m"),
+                visibility=current.get("visibility")
+            )
+            
+            return env_data
     
     @staticmethod
     async def get_weather_data(
@@ -236,23 +265,23 @@ class WeatherService:
             "latlng": f"{latitude},{longitude}"
         }
         
-        async with aiohttp.ClientSession() as session:
-            async with session.get(
-                WeatherService.AQI_API, 
-                params=params, 
-                timeout=aiohttp.ClientTimeout(total=10)
-            ) as response:
-                if response.status != 200:
-                    logger.warning(f"AQI API returned {response.status}")
-                    raise Exception(f"AQI API returned {response.status}")
-                
-                data = await response.json()
-                
-                if data.get("status") != "ok":
-                    logger.warning("AQI API returned non-ok status")
-                    raise Exception("AQI API returned non-ok status")
-                
-                return data.get("data", {})
+        session = _get_http_session()
+        async with session.get(
+            WeatherService.AQI_API, 
+            params=params, 
+            timeout=aiohttp.ClientTimeout(total=10)
+        ) as response:
+            if response.status != 200:
+                logger.warning(f"AQI API returned {response.status}")
+                raise Exception(f"AQI API returned {response.status}")
+            
+            data = await response.json()
+            
+            if data.get("status") != "ok":
+                logger.warning("AQI API returned non-ok status")
+                raise Exception("AQI API returned non-ok status")
+            
+            return data.get("data", {})
     
     @staticmethod
     async def get_aqi_data(

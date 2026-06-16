@@ -6,20 +6,18 @@ import uuid
 from datetime import datetime, timedelta
 from typing import Optional, List
 
-from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Header, Query
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Header, Query, Path
 from sqlalchemy.orm import Session
 
 from backend.config.settings import settings
 from backend.config.security import security_config
 from backend.models.schemas import (
-    EnvironmentalReport, 
-    SmokeDetectionRequest,
+    EnvironmentalReport,
     ErrorResponse
 )
 from backend.models.database import get_db
 from backend.models.orm import HistoricalReport, PollutantReading
-from backend.services.detection import get_detector, ImageProcessor
+from backend.services.detection import ImageProcessor
 from backend.services.air_quality import SmokeAnalyzer, PollutantPredictor
 from backend.services.geolocation import EnvironmentalDataService
 from backend.services.report_generator import ReportGenerator
@@ -28,8 +26,9 @@ from backend.security import (
     InputSanitizer,
     RequestValidator,
     log_security_event,
-    rate_limiter
+    verify_api_key
 )
+from backend.services.cache import rate_limiter
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1", tags=["environmental"])
@@ -65,7 +64,7 @@ def _save_report_to_db(report: EnvironmentalReport, db: Session) -> HistoricalRe
             aqi_value=report.air_quality_summary.aqi_value,
             primary_pollutant=report.air_quality_summary.primary_pollutant.value,
             smoke_percentage=report.smoke_analysis.smoke_percentage,
-            risk_level=report.air_quality_summary.health_recommendation[:50],
+            risk_level=report.smoke_analysis.smoke_level.value,
             
             # Image metadata
             image_filename=report.image_metadata.get('filename'),
@@ -115,14 +114,6 @@ def _save_report_to_db(report: EnvironmentalReport, db: Session) -> HistoricalRe
         db.rollback()
         logger.error(f"Failed to save report to database: {e}", exc_info=True)
         raise
-
-
-def verify_api_key(x_api_key: Optional[str] = Header(None)) -> None:
-    """Verify API key from header"""
-    if settings.API_KEY != "your-secret-key-change-in-production":
-        if x_api_key != settings.API_KEY:
-            log_security_event("INVALID_API_KEY", {"provided_key": x_api_key[:8] if x_api_key else None}, "WARNING")
-            raise HTTPException(status_code=401, detail="Invalid API key")
 
 
 def validate_request_origin(origin: Optional[str] = Header(None), x_forwarded_for: Optional[str] = Header(None)) -> None:
@@ -243,15 +234,16 @@ async def analyze_smoke_and_air_quality(
         logger.info(f"Request {request_id}: Fetching geolocation data")
         env_data_service = EnvironmentalDataService(aqi_token=settings.get("WAQI_TOKEN"))
         
-        location, environmental_data, aqi_data = await env_data_service.get_complete_environmental_data(
-            latitude,
-            longitude,
-            accuracy
-        ) if include_weather else (
-            env_data_service.geo_service.get_address_from_coordinates(latitude, longitude, accuracy),
-            None,
-            None
-        )
+        if include_weather:
+            location, environmental_data, aqi_data = await env_data_service.get_complete_environmental_data(
+                latitude,
+                longitude,
+                accuracy
+            )
+        else:
+            location = env_data_service.geo_service.get_address_from_coordinates(latitude, longitude, accuracy)
+            environmental_data = None
+            aqi_data = None
         
         # ===== REPORT GENERATION =====
         logger.info(f"Request {request_id}: Generating comprehensive report")
@@ -317,30 +309,55 @@ async def analyze_smoke_html(
     accuracy: Optional[float] = Query(None),
     confidence: float = Query(0.5),
     include_weather: bool = Query(True),
-    api_key: None = Depends(verify_api_key)
+    api_key: None = Depends(verify_api_key),
+    origin: Optional[str] = Header(None),
+    x_forwarded_for: Optional[str] = Header(None),
+    _origin_check: None = Depends(validate_request_origin)
 ):
     """
     Analyze smoke and return HTML report
     Same as /analyze-smoke but returns formatted HTML report
     """
     request_id = str(uuid.uuid4())
+    client_ip = x_forwarded_for.split(',')[0] if x_forwarded_for else "unknown"
     
     try:
-        # Basic validation
+        # ===== RATE LIMITING =====
+        if not rate_limiter.is_allowed(client_ip):
+            log_security_event("RATE_LIMIT_EXCEEDED", {"ip": client_ip, "endpoint": "/analyze-smoke/html"}, "WARNING")
+            raise HTTPException(status_code=429, detail="Rate limit exceeded. Max 100 requests per minute.")
+        
+        # ===== INPUT VALIDATION =====
         if not file.filename:
             raise HTTPException(status_code=400, detail="No filename provided")
         
+        # Sanitize filename
+        file.filename = InputSanitizer.sanitize_string(file.filename, max_length=100)
+        
+        # Validate coordinates
+        is_valid, error_msg = RequestValidator.validate_coordinates(latitude, longitude)
+        if not is_valid:
+            raise HTTPException(status_code=400, detail=error_msg)
+        
+        # Validate confidence
+        is_valid, error_msg = RequestValidator.validate_confidence(confidence)
+        if not is_valid:
+            raise HTTPException(status_code=400, detail=error_msg)
+        
         ext = file.filename.split('.')[-1].lower()
         if ext not in settings.ALLOWED_EXTENSIONS:
+            log_security_event("INVALID_FILE_TYPE", {"ip": client_ip, "ext": ext}, "WARNING")
             raise HTTPException(status_code=400, detail=f"Invalid file type")
         
         contents = await file.read()
         if len(contents) > settings.MAX_UPLOAD_SIZE:
+            log_security_event("FILE_TOO_LARGE", {"ip": client_ip, "size": len(contents)}, "WARNING")
             raise HTTPException(status_code=413, detail=f"File too large")
         
         # File security validation
         is_valid, error_msg = FileSecurityValidator.validate_file(contents, file.filename)
         if not is_valid:
+            log_security_event("MALICIOUS_FILE_DETECTED", {"ip": client_ip, "error": error_msg}, "CRITICAL")
             raise HTTPException(status_code=400, detail=error_msg)
         
         # Analyze
@@ -352,15 +369,15 @@ async def analyze_smoke_html(
         pollutant_readings = PollutantPredictor.estimate_pollutants(smoke_analysis)
         
         env_data_service = EnvironmentalDataService(aqi_token=settings.get("WAQI_TOKEN"))
-        location, environmental_data, _ = await env_data_service.get_complete_environmental_data(
-            latitude,
-            longitude,
-            accuracy
-        ) if include_weather else (
-            env_data_service.geo_service.get_address_from_coordinates(latitude, longitude, accuracy),
-            None,
-            None
-        )
+        if include_weather:
+            location, environmental_data, _ = await env_data_service.get_complete_environmental_data(
+                latitude,
+                longitude,
+                accuracy
+            )
+        else:
+            location = env_data_service.geo_service.get_address_from_coordinates(latitude, longitude, accuracy)
+            environmental_data = None
         
         report = ReportGenerator.generate_report(
             location=location,
@@ -374,6 +391,12 @@ async def analyze_smoke_html(
         
         html_content = ReportGenerator.create_html_report(report)
         
+        log_security_event("HTML_ANALYSIS_COMPLETED", {
+            "ip": client_ip,
+            "request_id": request_id,
+            "aqi": report.air_quality_summary.aqi_value
+        }, "INFO")
+        
         from fastapi.responses import HTMLResponse
         return HTMLResponse(content=html_content)
         
@@ -381,6 +404,11 @@ async def analyze_smoke_html(
         raise
     except Exception as e:
         logger.error(f"Request {request_id}: HTML report failed - {str(e)}")
+        log_security_event("HTML_ANALYSIS_ERROR", {
+            "ip": client_ip,
+            "request_id": request_id,
+            "error": str(e)[:50]
+        }, "ERROR")
         raise HTTPException(status_code=500, detail="Report generation failed")
 
 
@@ -390,18 +418,47 @@ async def get_analysis_summary(
     latitude: float = Query(...),
     longitude: float = Query(...),
     accuracy: Optional[float] = Query(None),
-    api_key: None = Depends(verify_api_key)
+    api_key: None = Depends(verify_api_key),
+    x_forwarded_for: Optional[str] = Header(None),
+    _origin_check: None = Depends(validate_request_origin)
 ):
     """
     Get quick text summary of smoke analysis
     Lighter endpoint for mobile apps needing quick summary
     """
+    request_id = str(uuid.uuid4())
+    client_ip = x_forwarded_for.split(',')[0] if x_forwarded_for else "unknown"
+    
     try:
+        # ===== RATE LIMITING =====
+        if not rate_limiter.is_allowed(client_ip):
+            raise HTTPException(status_code=429, detail="Rate limit exceeded")
+        
+        # ===== INPUT VALIDATION =====
+        if not file.filename:
+            raise HTTPException(status_code=400, detail="No filename provided")
+        
+        # Sanitize filename
+        file.filename = InputSanitizer.sanitize_string(file.filename, max_length=100)
+        
+        # Validate coordinates
+        is_valid, error_msg = RequestValidator.validate_coordinates(latitude, longitude)
+        if not is_valid:
+            raise HTTPException(status_code=400, detail=error_msg)
+        
+        # ===== FILE SECURITY =====
+        ext = file.filename.split('.')[-1].lower()
+        if ext not in settings.ALLOWED_EXTENSIONS:
+            raise HTTPException(status_code=400, detail=f"File type not allowed")
+        
         contents = await file.read()
+        if len(contents) > settings.MAX_UPLOAD_SIZE:
+            raise HTTPException(status_code=413, detail=f"File too large")
         
         # File security validation
         is_valid, error_msg = FileSecurityValidator.validate_file(contents, file.filename)
         if not is_valid:
+            log_security_event("MALICIOUS_FILE_DETECTED", {"ip": client_ip, "error": error_msg}, "CRITICAL")
             raise HTTPException(status_code=400, detail=error_msg)
         
         image = ImageProcessor.load_from_bytes(contents)
@@ -423,6 +480,12 @@ async def get_analysis_summary(
         
         summary = ReportGenerator.create_summary(report)
         
+        log_security_event("SUMMARY_COMPLETED", {
+            "ip": client_ip,
+            "request_id": request_id,
+            "aqi": report.air_quality_summary.aqi_value
+        }, "INFO")
+        
         return {
             "report_id": report.report_id,
             "timestamp": report.timestamp,
@@ -437,8 +500,15 @@ async def get_analysis_summary(
             "recommendation": report.air_quality_summary.health_recommendation
         }
         
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Summary generation failed: {e}")
+        logger.error(f"Request {request_id}: Summary generation failed - {str(e)}")
+        log_security_event("SUMMARY_ERROR", {
+            "ip": client_ip,
+            "request_id": request_id,
+            "error": str(e)[:50]
+        }, "ERROR")
         raise HTTPException(status_code=500, detail="Summary generation failed")
 
 
@@ -511,7 +581,7 @@ async def get_reports_history(
 
 @router.get("/reports/{report_id}")
 async def get_report_by_id(
-    report_id: str = Query(..., regex=r"^RPT_[A-Z0-9]{8}$", description="Report ID"),
+    report_id: str = Path(..., regex=r"^RPT_[A-Z0-9]{8}$", description="Report ID"),
     api_key: None = Depends(verify_api_key),
     db: Session = Depends(get_db)
 ):
