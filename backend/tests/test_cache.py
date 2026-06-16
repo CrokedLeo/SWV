@@ -256,14 +256,16 @@ class TestRateLimiter:
     @pytest.mark.unit
     def test_rate_limiter_first_request_allowed(self, rate_limiter):
         """Test first request is always allowed"""
-        assert rate_limiter.is_allowed("user_1")
+        allowed, _ = rate_limiter.is_allowed("user_1")
+        assert allowed
     
     @pytest.mark.unit
     def test_rate_limiter_multiple_requests_under_limit(self, rate_limiter):
         """Test multiple requests under limit are allowed"""
         identifier = "user_1"
         for i in range(5):
-            assert rate_limiter.is_allowed(identifier)
+            allowed, _ = rate_limiter.is_allowed(identifier)
+            assert allowed
     
     @pytest.mark.unit
     def test_rate_limiter_exceeds_limit(self):
@@ -272,20 +274,20 @@ class TestRateLimiter:
         identifier = "user_1"
         
         # Fill up the limit
-        assert limiter.is_allowed(identifier)
-        assert limiter.is_allowed(identifier)
-        assert limiter.is_allowed(identifier)
+        assert limiter.is_allowed(identifier)[0]
+        assert limiter.is_allowed(identifier)[0]
+        assert limiter.is_allowed(identifier)[0]
         
         # Next request should be denied
-        assert not limiter.is_allowed(identifier)
+        assert not limiter.is_allowed(identifier)[0]
     
     @pytest.mark.unit
     def test_rate_limiter_different_identifiers(self, rate_limiter):
         """Test rate limiting per identifier"""
         # Each user should have their own limit
-        assert rate_limiter.is_allowed("user_1")
-        assert rate_limiter.is_allowed("user_2")
-        assert rate_limiter.is_allowed("user_3")
+        assert rate_limiter.is_allowed("user_1")[0]
+        assert rate_limiter.is_allowed("user_2")[0]
+        assert rate_limiter.is_allowed("user_3")[0]
     
     @pytest.mark.unit
     def test_rate_limiter_get_remaining(self, rate_limiter):
@@ -326,15 +328,15 @@ class TestRateLimiter:
         limiter = RateLimiter(max_requests=2, window_seconds=1)
         identifier = "user_1"
         
-        assert limiter.is_allowed(identifier)
-        assert limiter.is_allowed(identifier)
-        assert not limiter.is_allowed(identifier)
+        assert limiter.is_allowed(identifier)[0]
+        assert limiter.is_allowed(identifier)[0]
+        assert not limiter.is_allowed(identifier)[0]
         
         # Wait for window to expire
         time.sleep(1.1)
         
         # Should allow new requests now
-        assert limiter.is_allowed(identifier)
+        assert limiter.is_allowed(identifier)[0]
 
 
 # ============= PERFORMANCE MONITOR TESTS =============
@@ -441,11 +443,12 @@ class TestCacheIntegration:
         
         # Simulate API calls with rate limiting
         for i in range(5):
-            assert limiter.is_allowed("api_client_1")
+            allowed, _ = limiter.is_allowed("api_client_1")
+            assert allowed
             cache.set(f"result_{i}", f"data_{i}", ttl_seconds=3600)
         
         # Next call should be rate limited
-        assert not limiter.is_allowed("api_client_1")
+        assert not limiter.is_allowed("api_client_1")[0]
         
         # But cache should still have data
         assert cache.get("result_0") == "data_0"

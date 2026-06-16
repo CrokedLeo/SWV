@@ -38,7 +38,7 @@ async def get_rate_limit_status(identifier: str, api_key: None = Depends(verify_
     """Check rate limit status for identifier"""
     return {
         "identifier": identifier,
-        "remaining_requests": rate_limiter.get_remaining(identifier),
+        "remaining_requests": await rate_limiter.get_remaining(identifier),
         "max_requests": rate_limiter.max_requests,
         "window_seconds": rate_limiter.window_seconds
     }
@@ -72,3 +72,13 @@ async def get_detailed_health():
             "cached_entries": cache_stats["total_entries"]
         }
     }
+
+
+@router.post("/monitor/rate-limit/reset")
+async def reset_rate_limiter(
+    identifier: Optional[str] = None,
+    api_key: None = Depends(verify_api_key)
+):
+    """Reset rate limiter for an identifier or all"""
+    await rate_limiter.reset(identifier)
+    return {"message": "Rate limit reset", "identifier": identifier or "all"}

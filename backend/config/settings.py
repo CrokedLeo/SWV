@@ -41,8 +41,18 @@ class Settings:
     LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
     LOG_FILE = os.getenv("LOG_FILE", "app.log")
     
+    # Redis (for rate limiting persistence)
+    REDIS_URL: str = os.getenv("REDIS_URL", "")
+    REDIS_ENABLED = os.getenv("REDIS_ENABLED", "true").lower() == "true"
+    
     # Database (for future use with reports storage)
     DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./swv.db")
+
+    # Sentry / Error Tracking
+    SENTRY_DSN: str = os.getenv("SENTRY_DSN", "")
+
+    # Structured Logging
+    JSON_LOGGING: bool = os.getenv("JSON_LOGGING", "false").lower() == "true"
     
     def get(self, key: str, default=None):
         """Get configuration value"""

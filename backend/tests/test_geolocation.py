@@ -69,8 +69,8 @@ class TestGeolocationService:
             florence_lat, florence_lon, rome_lat, rome_lon
         )
         
-        # Should be approximately 280 km (±10)
-        assert 270 < distance < 290
+        # Should be approximately 230 km (±10)
+        assert 220 < distance < 240
     
     @pytest.mark.unit
     def test_calculate_distance_symmetry(self):
@@ -134,7 +134,8 @@ class TestGeolocationService:
             mock_geocoder = Mock()
             mock_geocoder.reverse.side_effect = GeocoderTimedOut()
             
-            with patch('backend.services.geolocation.cache_manager'):
+            with patch('backend.services.geolocation.cache_manager') as mock_cache:
+                mock_cache.get_cached_geolocation.return_value = None
                 service = GeolocationService()
                 service.geocoder = mock_geocoder
                 
@@ -164,16 +165,20 @@ class TestWeatherService:
             }
         }
         
-        with patch('backend.services.geolocation.aiohttp.ClientSession') as mock_session:
-            mock_session_obj = AsyncMock()
+        with patch('backend.services.geolocation._get_http_session') as mock_get_session:
+            mock_session_obj = MagicMock()
             mock_response_obj = AsyncMock()
             mock_response_obj.status = 200
             mock_response_obj.json = AsyncMock(return_value=mock_response)
             
-            mock_session_obj.get.return_value.__aenter__.return_value = mock_response_obj
-            mock_session.return_value.__aenter__.return_value = mock_session_obj
+            mock_ctx = MagicMock()
+            mock_ctx.__aenter__ = AsyncMock(return_value=mock_response_obj)
+            mock_ctx.__aexit__ = AsyncMock(return_value=None)
+            mock_session_obj.get.return_value = mock_ctx
+            mock_get_session.return_value = mock_session_obj
             
-            with patch('backend.services.geolocation.cache_manager'):
+            with patch('backend.services.geolocation.cache_manager') as mock_cache:
+                mock_cache.get_cached_weather.return_value = None
                 result = await WeatherService.get_weather_data(43.7701, 11.2556)
                 
                 assert isinstance(result, EnvironmentalData)
@@ -184,15 +189,19 @@ class TestWeatherService:
     @pytest.mark.unit
     async def test_get_weather_data_api_error(self):
         """Test weather API error handling"""
-        with patch('backend.services.geolocation.aiohttp.ClientSession') as mock_session:
-            mock_session_obj = AsyncMock()
+        with patch('backend.services.geolocation._get_http_session') as mock_get_session:
+            mock_session_obj = MagicMock()
             mock_response_obj = AsyncMock()
             mock_response_obj.status = 500
             
-            mock_session_obj.get.return_value.__aenter__.return_value = mock_response_obj
-            mock_session.return_value.__aenter__.return_value = mock_session_obj
+            mock_ctx = MagicMock()
+            mock_ctx.__aenter__ = AsyncMock(return_value=mock_response_obj)
+            mock_ctx.__aexit__ = AsyncMock(return_value=None)
+            mock_session_obj.get.return_value = mock_ctx
+            mock_get_session.return_value = mock_session_obj
             
-            with patch('backend.services.geolocation.cache_manager'):
+            with patch('backend.services.geolocation.cache_manager') as mock_cache:
+                mock_cache.get_cached_weather.return_value = None
                 result = await WeatherService.get_weather_data(43.7701, 11.2556)
                 
                 assert result is None
@@ -210,14 +219,17 @@ class TestWeatherService:
             }
         }
         
-        with patch('backend.services.geolocation.aiohttp.ClientSession') as mock_session:
-            mock_session_obj = AsyncMock()
+        with patch('backend.services.geolocation._get_http_session') as mock_get_session:
+            mock_session_obj = MagicMock()
             mock_response_obj = AsyncMock()
             mock_response_obj.status = 200
             mock_response_obj.json = AsyncMock(return_value=mock_response)
             
-            mock_session_obj.get.return_value.__aenter__.return_value = mock_response_obj
-            mock_session.return_value.__aenter__.return_value = mock_session_obj
+            mock_ctx = MagicMock()
+            mock_ctx.__aenter__ = AsyncMock(return_value=mock_response_obj)
+            mock_ctx.__aexit__ = AsyncMock(return_value=None)
+            mock_session_obj.get.return_value = mock_ctx
+            mock_get_session.return_value = mock_session_obj
             
             result = await WeatherService.get_aqi_data(43.7701, 11.2556, aqi_token="test_token")
             
@@ -241,14 +253,17 @@ class TestWeatherService:
             "data": {}
         }
         
-        with patch('backend.services.geolocation.aiohttp.ClientSession') as mock_session:
-            mock_session_obj = AsyncMock()
+        with patch('backend.services.geolocation._get_http_session') as mock_get_session:
+            mock_session_obj = MagicMock()
             mock_response_obj = AsyncMock()
             mock_response_obj.status = 200
             mock_response_obj.json = AsyncMock(return_value=mock_response)
             
-            mock_session_obj.get.return_value.__aenter__.return_value = mock_response_obj
-            mock_session.return_value.__aenter__.return_value = mock_session_obj
+            mock_ctx = MagicMock()
+            mock_ctx.__aenter__ = AsyncMock(return_value=mock_response_obj)
+            mock_ctx.__aexit__ = AsyncMock(return_value=None)
+            mock_session_obj.get.return_value = mock_ctx
+            mock_get_session.return_value = mock_session_obj
             
             result = await WeatherService.get_aqi_data(43.7701, 11.2556, aqi_token="test_token")
             

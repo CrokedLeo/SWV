@@ -151,10 +151,14 @@ class InputSanitizer:
         # Remove control characters
         value = ''.join(char for char in value if ord(char) >= 32 or char == '\n')
         
-        # Remove path traversal sequences
+        # Remove HTML/XML tags (XSS prevention)
         import re as _re
-        value = _re.sub(r'\.\.[/\\]', '', value)
-        value = _re.sub(r'[/\\]\.\.', '', value)
+        value = _re.sub(r'<[^>]*>', '', value)
+        
+        # Remove path traversal sequences
+        value = _re.sub(r'(\.\.\s*[/\\])|([/\\]\s*\.\.)', '', value)
+        # Also handle standalone ".." with adjacent chars that form traversal
+        value = _re.sub(r'(?<![a-zA-Z])\.\.(?![a-zA-Z])', '', value)
         
         return value.strip()
     

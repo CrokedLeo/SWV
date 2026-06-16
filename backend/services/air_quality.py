@@ -213,7 +213,7 @@ class PollutantPredictor:
             
             readings.append(PollutantReading(
                 pollutant_type=pollutant_type,
-                value=round(adjusted_value, 2),
+                value=min(round(adjusted_value, 2), 9999.99),
                 unit=unit,
                 aqi_index=aqi_index,
                 risk_level=risk_level

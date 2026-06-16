@@ -1,27 +1,74 @@
-version: '3.9'
-
 services:
   api:
     build: .
     container_name: swv-api
-    ports:
-      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     environment:
-      - HOST=0.0.0.0
-      - PORT=8000
-      - DEBUG=false
-      - YOLO_MODEL=yolov8n.pt
-      - CONFIDENCE_THRESHOLD=0.5
-      - API_KEY=your-secret-key-change-in-production
-      - CORS_ORIGINS=*
-      - LOG_LEVEL=INFO
-    volumes:
-      - ./uploads:/app/uploads
-      - ./app.log:/app/app.log
+      - ENVIRONMENT=production
+      - DATABASE_URL=postgresql://swv:swv@db:5432/swv
+      - REDIS_URL=redis://redis:6379/0
+    networks:
+      - backend
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/api/v1/health')"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 5s
+      start_period: 10s
+
+  db:
+    image: postgres:15-alpine
+    container_name: swv-db
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_USER=swv
+      - POSTGRES_PASSWORD=swv
+      - POSTGRES_DB=swv
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U swv -d swv"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - backend
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: swv-redis
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - backend
+    restart: unless-stopped
+
+  nginx:
+    build: ./nginx
+    container_name: swv-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      - api
+    networks:
+      - backend
+    restart: unless-stopped
+
+networks:
+  backend:
+    driver: bridge
+
+volumes:
+  pgdata:
+  redis_data:

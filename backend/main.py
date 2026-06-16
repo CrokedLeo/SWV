@@ -11,6 +11,20 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 import uvicorn
 
+# Sentry SDK for error tracking
+try:
+    import sentry_sdk
+    from sentry_sdk.integrations.fastapi import FastApiIntegration
+    from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
+except ImportError:
+    sentry_sdk = None
+
+# Prometheus metrics
+try:
+    from prometheus_fastapi_instrumentator import Instrumentator
+except ImportError:
+    Instrumentator = None
+
 from backend.config.settings import settings
 from backend.config.security import security_config
 from backend.middleware.security_headers import (
@@ -24,16 +38,10 @@ from backend.routes.monitoring import router as monitoring_router
 from backend.routes.health import router as health_router
 from backend.models.schemas import ErrorResponse
 from backend.models.database import init_db
+from backend.utils.logging import setup_logging
 
-# Configure logging
-logging.basicConfig(
-    level=settings.LOG_LEVEL,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[
-        logging.FileHandler(settings.LOG_FILE),
-        logging.StreamHandler()
-    ]
-)
+# Configure structured logging
+setup_logging(json_format=settings.JSON_LOGGING)
 logger = logging.getLogger(__name__)
 
 
@@ -50,6 +58,19 @@ async def lifespan(app: FastAPI):
     logger.info(f"Caching: ENABLED")
     logger.info(f"Rate Limiting: ENABLED")
     
+    # Initialize Sentry SDK for error tracking
+    if sentry_sdk and settings.SENTRY_DSN:
+        sentry_sdk.init(
+            dsn=settings.SENTRY_DSN,
+            environment=security_config.get_environment_name(),
+            traces_sample_rate=0.25 if security_config.ENVIRONMENT == "production" else 1.0,
+            integrations=[
+                FastApiIntegration(),
+                SqlalchemyIntegration(),
+            ],
+        )
+        logger.info("Sentry SDK initialized")
+    
     # Initialize database
     try:
         init_db()
@@ -59,6 +80,8 @@ async def lifespan(app: FastAPI):
     
     yield
     logger.info(f"Shutting down {settings.APP_NAME}")
+    from backend.services.cache import rate_limiter
+    await rate_limiter.close()
 
 
 # Create FastAPI app
@@ -71,6 +94,11 @@ app = FastAPI(
     openapi_url="/api/openapi.json",
     redoc_url="/api/redoc"
 )
+
+# Prometheus metrics endpoint
+if Instrumentator:
+    Instrumentator().instrument(app).expose(app, endpoint="/metrics")
+    logger.info("Prometheus metrics enabled at /metrics")
 
 # ===== SECURITY MIDDLEWARE STACK =====
 # Order matters! Add middlewares in reverse order of execution

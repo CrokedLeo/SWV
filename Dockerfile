@@ -1,33 +1,40 @@
-FROM python:3.11-slim
+FROM python:3.11-slim as builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    libsm6 \
-    libxext6 \
-    libxrender-dev \
+COPY requirements.txt .
+
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
+
+
+FROM python:3.11-slim as runtime
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
     libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements
-COPY requirements.txt .
+COPY --from=builder /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
 
-# Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+WORKDIR /app
 
-# Copy application code
 COPY . .
 
-# Create uploads directory
-RUN mkdir -p uploads
+RUN groupadd -r swv && useradd -r -g swv -u 1000 swv && \
+    mkdir -p /app/uploads && \
+    chown -R swv:swv /app
 
-# Expose port
+USER swv
+
 EXPOSE 8000
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD python -c "import requests; requests.get('http://localhost:8000/api/v1/health')"
-
-# Run application
-CMD ["python", "-m", "uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]

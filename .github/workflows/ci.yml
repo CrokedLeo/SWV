@@ -1,0 +1,171 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  PYTHON_VERSION: "3.11"
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      - name: Lint with ruff
+        run: ruff check backend/
+      - name: Format check with ruff
+        run: ruff format --check backend/
+      - name: Type check with mypy
+        run: mypy backend/
+
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: swv
+          POSTGRES_PASSWORD: swv
+          POSTGRES_DB: swv_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    strategy:
+      matrix:
+        python-version: ["3.11"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      - name: Run pytest with coverage
+        run: pytest --cov=backend --cov-report=term --cov-report=xml --cov-report=html
+        env:
+          DATABASE_URL: postgresql://swv:swv@localhost:5432/swv_test
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-${{ matrix.python-version }}
+          path: htmlcov/
+      - name: Coverage gate
+        run: |
+          coverage report --fail-under=80
+        env:
+          DATABASE_URL: postgresql://swv:swv@localhost:5432/swv_test
+
+  build-api:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Cache Docker layers
+        uses: actions/cache@v4
+        with:
+          path: /tmp/.buildx-cache
+          key: ${{ runner.os }}-buildx-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-buildx-
+      - name: Build Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: swv-api:ci
+          cache-from: type=local,src=/tmp/.buildx-cache
+          cache-to: type=local,dest=/tmp/.buildx-cache-new,mode=max
+      - name: Scan with Trivy
+        uses: aquasecurity/trivy-action@0.29.0
+        continue-on-error: true
+        with:
+          image-ref: swv-api:ci
+          format: table
+          exit-code: 1
+          severity: HIGH,CRITICAL
+      - name: Move cache
+        run: |
+          rm -rf /tmp/.buildx-cache
+          mv /tmp/.buildx-cache-new /tmp/.buildx-cache
+
+  benchmark:
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      - name: Start API server
+        run: |
+          uvicorn backend.main:app --host 0.0.0.0 --port 8000 &
+          sleep 5
+          curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/api/v1/health
+        timeout-minutes: 2
+      - name: Run load tests
+        run: python -m backend.benchmarks.load_test
+      - name: Read benchmark report
+        id: load_report
+        run: |
+          if (Test-Path load_test_report.json) {
+            $report = Get-Content load_test_report.json -Raw
+            echo "report<<EOF" >> $env:GITHUB_OUTPUT
+            echo $report >> $env:GITHUB_OUTPUT
+            echo "EOF" >> $env:GITHUB_OUTPUT
+          } else {
+            echo "report=null" >> $env:GITHUB_OUTPUT
+          }
+        shell: pwsh
+      - name: Comment PR with benchmark results
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const report = ${{ steps.load_report.outputs.report || 'null' }};
+            if (!report) {
+              await github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: '## Load Test Results\n\nNo benchmark report was generated.'
+              });
+              return;
+            }
+            let body = '## Load Test Results\n\n';
+            body += '| Endpoint | Concurrency | Req/s | p50(ms) | p95(ms) | p99(ms) | Errors(%) |\n';
+            body += '|----------|------------|------|---------|---------|---------|----------|\n';
+            for (const r of report.results) {
+              const lat = r.latency_ms;
+              body += `| ${r.endpoint} | ${r.concurrency} | ${r.requests_per_sec} | ${lat.p50} | ${lat.p95} | ${lat.p99} | ${r.error_rate_pct} |\n`;
+            }
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });

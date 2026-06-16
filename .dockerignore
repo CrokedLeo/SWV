@@ -1,0 +1,11 @@
+__pycache__
+.git
+.env
+venv
+*.pyc
+.coverage
+htmlcov
+.pytest_cache
+node_modules
+android
+*.db

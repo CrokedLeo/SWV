@@ -2,11 +2,14 @@
 Environmental monitoring API routes
 """
 import logging
+import time
 import uuid
 from datetime import datetime, timedelta
 from typing import Optional, List
 
 from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Header, Query, Path
+from fastapi.responses import JSONResponse
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from backend.config.settings import settings
@@ -168,7 +171,8 @@ async def analyze_smoke_and_air_quality(
     
     try:
         # ===== RATE LIMITING =====
-        if not rate_limiter.is_allowed(client_ip):
+        allowed, remaining = rate_limiter.is_allowed(client_ip)
+        if not allowed:
             log_security_event("RATE_LIMIT_EXCEEDED", {"ip": client_ip, "endpoint": "/analyze-smoke"}, "WARNING")
             raise HTTPException(status_code=429, detail="Rate limit exceeded. Max 100 requests per minute.")
         
@@ -284,7 +288,14 @@ async def analyze_smoke_and_air_quality(
             logger.warning(f"Request {request_id}: Failed to persist report to database: {e}")
             # Don't fail the request if database save fails
         
-        return report
+        return JSONResponse(
+            content=report.model_dump(),
+            headers={
+                "X-RateLimit-Limit": str(rate_limiter.max_requests),
+                "X-RateLimit-Remaining": str(remaining),
+                "X-RateLimit-Reset": str(int(time.time() + rate_limiter.window_seconds)),
+            }
+        )
         
     except HTTPException:
         raise
@@ -323,7 +334,8 @@ async def analyze_smoke_html(
     
     try:
         # ===== RATE LIMITING =====
-        if not rate_limiter.is_allowed(client_ip):
+        allowed, remaining = rate_limiter.is_allowed(client_ip)
+        if not allowed:
             log_security_event("RATE_LIMIT_EXCEEDED", {"ip": client_ip, "endpoint": "/analyze-smoke/html"}, "WARNING")
             raise HTTPException(status_code=429, detail="Rate limit exceeded. Max 100 requests per minute.")
         
@@ -398,7 +410,14 @@ async def analyze_smoke_html(
         }, "INFO")
         
         from fastapi.responses import HTMLResponse
-        return HTMLResponse(content=html_content)
+        return HTMLResponse(
+            content=html_content,
+            headers={
+                "X-RateLimit-Limit": str(rate_limiter.max_requests),
+                "X-RateLimit-Remaining": str(remaining),
+                "X-RateLimit-Reset": str(int(time.time() + rate_limiter.window_seconds)),
+            }
+        )
         
     except HTTPException:
         raise
@@ -431,7 +450,8 @@ async def get_analysis_summary(
     
     try:
         # ===== RATE LIMITING =====
-        if not rate_limiter.is_allowed(client_ip):
+        allowed, remaining = rate_limiter.is_allowed(client_ip)
+        if not allowed:
             raise HTTPException(status_code=429, detail="Rate limit exceeded")
         
         # ===== INPUT VALIDATION =====
@@ -486,19 +506,26 @@ async def get_analysis_summary(
             "aqi": report.air_quality_summary.aqi_value
         }, "INFO")
         
-        return {
-            "report_id": report.report_id,
-            "timestamp": report.timestamp,
-            "aqi": report.air_quality_summary.aqi_value,
-            "smoke_percent": smoke_analysis.smoke_percentage,
-            "location": {
-                "city": location.city,
-                "region": location.region,
-                "country": location.country
+        return JSONResponse(
+            content={
+                "report_id": report.report_id,
+                "timestamp": report.timestamp,
+                "aqi": report.air_quality_summary.aqi_value,
+                "smoke_percent": smoke_analysis.smoke_percentage,
+                "location": {
+                    "city": location.city,
+                    "region": location.region,
+                    "country": location.country
+                },
+                "summary": summary,
+                "recommendation": report.air_quality_summary.health_recommendation
             },
-            "summary": summary,
-            "recommendation": report.air_quality_summary.health_recommendation
-        }
+            headers={
+                "X-RateLimit-Limit": str(rate_limiter.max_requests),
+                "X-RateLimit-Remaining": str(remaining),
+                "X-RateLimit-Reset": str(int(time.time() + rate_limiter.window_seconds)),
+            }
+        )
         
     except HTTPException:
         raise
@@ -520,6 +547,7 @@ async def get_reports_history(
     longitude: float = Query(..., ge=-180, le=180, description="Center longitude"),
     radius_km: float = Query(10, ge=1, le=100, description="Search radius in kilometers"),
     days: int = Query(30, ge=1, le=365, description="Days of history to retrieve"),
+    offset: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(50, ge=1, le=500, description="Max records to return"),
     api_key: None = Depends(verify_api_key),
     db: Session = Depends(get_db)
@@ -549,20 +577,32 @@ async def get_reports_history(
         min_lon = longitude - radius_degrees
         max_lon = longitude + radius_degrees
         
-        # Query reports within spatial and temporal bounds
-        reports = db.query(HistoricalReport).filter(
+        # Build base filter
+        base_filter = (
             HistoricalReport.timestamp >= start_date,
             HistoricalReport.timestamp <= end_date,
             HistoricalReport.latitude >= min_lat,
             HistoricalReport.latitude <= max_lat,
             HistoricalReport.longitude >= min_lon,
             HistoricalReport.longitude <= max_lon,
-        ).order_by(HistoricalReport.timestamp.desc()).limit(limit).all()
+        )
+        
+        # Get total count for pagination
+        total = db.query(func.count(HistoricalReport.id)).filter(*base_filter).scalar()
+        
+        # Query reports within spatial and temporal bounds
+        reports = db.query(HistoricalReport).filter(
+            *base_filter
+        ).order_by(HistoricalReport.timestamp.desc()).offset(offset).limit(limit).all()
         
         logger.info(f"Retrieved {len(reports)} historical reports for location ({latitude}, {longitude})")
         
         return {
             "count": len(reports),
+            "total": total,
+            "offset": offset,
+            "limit": limit,
+            "has_more": (offset + len(reports)) < total,
             "query": {
                 "latitude": latitude,
                 "longitude": longitude,
@@ -581,7 +621,7 @@ async def get_reports_history(
 
 @router.get("/reports/{report_id}")
 async def get_report_by_id(
-    report_id: str = Path(..., regex=r"^RPT_[A-Z0-9]{8}$", description="Report ID"),
+    report_id: str = Path(..., pattern=r"^RPT_[A-Z0-9]{8}$", description="Report ID"),
     api_key: None = Depends(verify_api_key),
     db: Session = Depends(get_db)
 ):

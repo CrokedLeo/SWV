@@ -1,0 +1,87 @@
+[project]
+name = "swv"
+version = "1.0.0"
+description = "Environmental Monitoring & Air Quality Analysis"
+requires-python = ">=3.11"
+dependencies = [
+    # Core
+    "fastapi>=0.104.0",
+    "uvicorn[standard]>=0.24.0",
+    "python-multipart>=0.0.6",
+    "pydantic>=2.5.0",
+    "python-dotenv>=1.0.0",
+    # Database
+    "sqlalchemy>=2.0.23",
+    "psycopg2-binary>=2.9.9",
+    "alembic>=1.13.0",
+    "redis>=5.0.0",
+    "pyyaml>=6.0",
+    # Monitoring & Observability
+    "sentry-sdk>=1.40.0",
+    "prometheus-fastapi-instrumentator>=6.1.0",
+    # Async & HTTP
+    "aiohttp>=3.9.0",
+    # Geospatial
+    "geopy>=2.4.0",
+    # Image Processing
+    "Pillow>=10.1.0",
+    "opencv-python-headless>=4.8.0",
+    "numpy>=1.24.0",
+    # Utils
+    "email-validator>=2.1.0",
+    # Existing project dependencies
+    "ultralytics>=8.0.0",
+    "scikit-image>=0.22.0",
+    "requests>=2.31.0",
+    "geopandas>=0.14.0",
+    "pandas>=2.1.0",
+    "scipy>=1.11.0",
+    "matplotlib>=3.8.0",
+    "tqdm>=4.66.0",
+    "python-dateutil>=2.8.0",
+    "openmeteo-requests>=1.1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    # Testing
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-cov>=4.1.0",
+    "httpx>=0.25.0",
+    # Linting & Formatting
+    "ruff>=0.1.0",
+    "black>=23.12.0",
+    "mypy>=1.7.0",
+    "pre-commit>=3.6.0",
+    # Load Testing
+    "locust>=2.20.0",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP", "B", "SIM", "ARG"]
+
+[tool.black]
+line-length = 120
+
+[tool.pytest.ini_options]
+testpaths = ["backend/tests"]
+asyncio_mode = "auto"
+
+[tool.coverage.run]
+source = ["backend"]
+omit = ["*/tests/*"]
+
+[tool.coverage.report]
+fail_under = 80
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true

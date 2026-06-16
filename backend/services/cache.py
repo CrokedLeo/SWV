@@ -45,8 +45,11 @@ class SimpleCache:
         """Set cache entry"""
         with self._lock:
             if len(self.cache) >= self.max_size:
-                # Remove oldest expired entry
                 self._cleanup_expired()
+                # If still full, evict oldest entry
+                if len(self.cache) >= self.max_size:
+                    oldest = min(self.cache.items(), key=lambda x: x[1].created_at)
+                    del self.cache[oldest[0]]
             
             self.cache[key] = CacheEntry(value, ttl_seconds)
             logger.debug(f"Cache SET: {key} (TTL: {ttl_seconds}s)")
@@ -161,8 +164,8 @@ class RateLimiter:
         self.requests: dict = {}
         self._lock = threading.Lock()
     
-    def is_allowed(self, identifier: str) -> bool:
-        """Check if request is allowed"""
+    def is_allowed(self, identifier: str) -> tuple[bool, int]:
+        """Check if request is allowed, returns (allowed, remaining)"""
         now = datetime.utcnow().timestamp()
         
         with self._lock:
@@ -176,13 +179,14 @@ class RateLimiter:
             ]
             
             # Check if limit exceeded
+            remaining = max(0, self.max_requests - len(self.requests[identifier]))
             if len(self.requests[identifier]) >= self.max_requests:
                 logger.warning(f"Rate limit exceeded for {identifier}")
-                return False
+                return (False, 0)
             
             # Add new request
             self.requests[identifier].append(now)
-            return True
+            return (True, remaining - 1)
     
     def get_remaining(self, identifier: str) -> int:
         """Get remaining requests in window"""
@@ -244,7 +248,8 @@ class PerformanceMonitor:
 
 # Global instances
 cache_manager = CacheManager()
-rate_limiter = RateLimiter(max_requests=100, window_seconds=60)
+from backend.services.redis_rate_limiter import RedisRateLimiter
+rate_limiter = RedisRateLimiter(max_requests=100, window_seconds=60)
 perf_monitor = PerformanceMonitor()
 
 

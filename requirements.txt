@@ -6,8 +6,12 @@ pydantic==2.5.0
 python-dotenv==1.0.0
 
 # Database
+psycopg2-binary==2.9.9
 sqlalchemy==2.0.23
 alembic==1.13.0
+
+# Cache
+redis==5.0.1
 
 # Computer Vision
 ultralytics==8.0.200
@@ -30,6 +34,10 @@ scipy==1.11.4
 matplotlib==3.8.2
 tqdm==4.66.1
 python-dateutil==2.8.2
+
+# Observability & Monitoring
+sentry-sdk==1.40.0
+prometheus-fastapi-instrumentator==6.0.0
 
 # Air Quality & Environmental APIs
 openmeteo-requests==1.1.5
