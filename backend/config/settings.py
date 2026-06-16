@@ -11,8 +11,8 @@ class Settings:
     
     # App info
     APP_NAME = "SWV - Smart Vision"
-    APP_VERSION = "1.0.0"
-    APP_DESCRIPTION = "Object Detection API with YOLO"
+    APP_VERSION = "2.0.0"
+    APP_DESCRIPTION = "Environmental Monitoring & Air Quality Analysis with YOLO"
     
     # Server
     HOST = os.getenv("HOST", "0.0.0.0")
@@ -33,8 +33,20 @@ class Settings:
     ALLOWED_EXTENSIONS = {"jpg", "jpeg", "png", "gif", "bmp", "webp"}
     UPLOAD_DIR = os.getenv("UPLOAD_DIR", "uploads")
     
+    # Environmental APIs
+    WAQI_TOKEN = os.getenv("WAQI_TOKEN")  # Optional: World Air Quality Index token
+    OPENMETEO_API = "https://api.open-meteo.com/v1/forecast"  # Free weather API
+    
     # Logging
     LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
     LOG_FILE = os.getenv("LOG_FILE", "app.log")
+    
+    # Database (for future use with reports storage)
+    DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./swv.db")
+    
+    def get(self, key: str, default=None):
+        """Get configuration value"""
+        return getattr(self, key, default)
 
 settings = Settings()
+

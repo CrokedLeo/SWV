@@ -13,6 +13,7 @@ import uvicorn
 
 from backend.config.settings import settings
 from backend.routes.detection import router as detection_router
+from backend.routes.environmental import router as environmental_router
 from backend.models.schemas import ErrorResponse
 
 # Configure logging
@@ -32,6 +33,8 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     """Startup and shutdown events"""
     logger.info(f"Starting {settings.APP_NAME} v{settings.APP_VERSION}")
+    logger.info(f"Environmental Monitoring Mode: ENABLED")
+    logger.info(f"YOLO Model: {settings.YOLO_MODEL}")
     yield
     logger.info(f"Shutting down {settings.APP_NAME}")
 
@@ -79,13 +82,23 @@ async def root():
     return {
         "message": f"Welcome to {settings.APP_NAME}",
         "version": settings.APP_VERSION,
+        "description": "Environmental Monitoring & Air Quality Analysis",
         "docs": "/api/docs",
-        "openapi": "/api/openapi.json"
+        "openapi": "/api/openapi.json",
+        "features": [
+            "Smoke detection from images",
+            "Pollutant estimation",
+            "Air quality indexing",
+            "Geographic data integration",
+            "Comprehensive environmental reports",
+            "Health recommendations"
+        ]
     }
 
 
 # Include routers
 app.include_router(detection_router)
+app.include_router(environmental_router)
 
 
 if __name__ == "__main__":
@@ -97,3 +110,4 @@ if __name__ == "__main__":
         reload=settings.RELOAD,
         log_level=settings.LOG_LEVEL.lower()
     )
+
