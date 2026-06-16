@@ -75,6 +75,8 @@ ehthumbs.db
 .pytest_cache/
 .coverage
 htmlcov/
+*.db
+*.sqlite3
 
 # YOLO Models
 *.pt

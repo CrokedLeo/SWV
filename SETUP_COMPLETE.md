@@ -86,7 +86,7 @@ backend/models/
 
 ```bash
 # Navigate to project
-cd C:\Users\lauda\Desktop\SWV
+cd SWV
 
 # Create virtual environment
 python -m venv venv
@@ -269,7 +269,7 @@ SWV/
 ### .env (copia da .env.example)
 ```bash
 API_KEY=your-secret-key-change-in-production
-YOLO_MODEL=yolov8n.pt
+YOLO_MODEL=yolov8n.onnx
 DEBUG=false
 
 # Opzionale: per dati AQI da stazioni locali
@@ -369,7 +369,7 @@ python -m uvicorn backend.main:app --reload
 ### "ModuleNotFoundError: No module named 'backend'"
 ```bash
 # Assicurati di essere nella directory giusta
-cd C:\Users\lauda\Desktop\SWV
+cd SWV
 
 # Run da project root
 python -m uvicorn backend.main:app --reload
@@ -384,7 +384,7 @@ python -m uvicorn backend.main:app --port 8001
 ### "YOLO model download fails"
 ```bash
 # Manually download model
-python -c "from ultralytics import YOLO; YOLO('yolov8n.pt')"
+python scripts/download_model.py
 ```
 
 ### "ImportError: No module named 'cv2'"

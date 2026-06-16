@@ -2,7 +2,7 @@ package com.swv.app.config
 
 object AppConfig {
     // Server Configuration
-    const val API_BASE_URL = "http://192.168.1.100:8000/"  // Change to your server IP
+    const val API_BASE_URL = "http://YOUR_SERVER_IP:8000/"  // Change to your server IP
     const val API_KEY = "your-secret-key-change-in-production"
     const val TIMEOUT_SECONDS = 30
     

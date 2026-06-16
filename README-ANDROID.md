@@ -53,7 +53,7 @@ The APK will be generated at:
 Update the backend URL in `app/src/main/java/com/swv/utils/Constants.kt`:
 
 ```kotlin
-const val API_BASE_URL = "http://192.168.1.100:8000/"
+const val API_BASE_URL = "http://YOUR_SERVER_IP:8000/"
 const val API_KEY = "your-secret-key-change-in-production"
 ```
 

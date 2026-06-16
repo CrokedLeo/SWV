@@ -120,7 +120,7 @@ SWV/
 STEP 1: SETUP BACKEND (5 minutes)
 ───────────────────────────────────────────────────────────────────────────────
 
-  cd C:\Users\lauda\Desktop\SWV
+  cd SWV
   
   # Create environment
   python -m venv venv
@@ -196,7 +196,7 @@ STEP 3: UNDERSTAND THE RESPONSE
 ───────────────────────────────────────────────────────────────────────────────
 
 1. Open Android Studio
-2. File → Open → Select: C:\Users\lauda\Desktop\SWV\android
+2. File → Open → Select: SWV/android
 3. Android Studio will auto-configure
 4. Edit AppConfig.kt:
    const val API_BASE_URL = "http://YOUR_MACHINE_IP:8000/"
@@ -366,7 +366,7 @@ Phase 4 (Advanced):
 ───────────────────────────────────────────────────────────────────────────────
 
 Q: "ModuleNotFoundError: No module named 'backend'"
-A: Make sure you're in the project root: C:\Users\lauda\Desktop\SWV
+A: Make sure you're in the project root: SWV/
    Then run: python -m uvicorn backend.main:app --reload
 
 Q: "Port 8000 already in use"

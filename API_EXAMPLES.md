@@ -300,7 +300,7 @@ All endpoints return JSON with consistent structure:
   "image_height": 480,
   "total_detections": 3,
   "processing_time_ms": 150.5,
-  "model_used": "yolov8n.pt",
+  "model_used": "yolov8n.onnx",
   "detections": [
     {
       "x_min": 100,

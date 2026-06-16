@@ -1,7 +1,7 @@
 package com.swv.utils
 
 object Constants {
-    const val API_BASE_URL = "http://192.168.1.100:8000/"
+    const val API_BASE_URL = "http://YOUR_SERVER_IP:8000/"
     const val API_KEY = "your-secret-key-change-in-production"
     const val CONNECT_TIMEOUT_SECONDS = 15L
     const val READ_TIMEOUT_SECONDS = 30L

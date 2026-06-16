@@ -81,7 +81,7 @@ Correlazione automatica tra livelli di fumo e concentrazioni di:
 - Python 3.11+
 - pip
 - 2GB+ RAM
-- 500MB disk (YOLO model)
+- 500MB disk (ONNX model - auto-downloaded on first use)
 - Internet (per API esterne)
 
 ### Android
@@ -318,14 +318,15 @@ PORT=8000
 # API Security
 API_KEY=your-secret-key-change-in-production
 
-# YOLO Model
-YOLO_MODEL=yolov8n.pt  # Options: yolov8n, s, m, l, x
+# YOLO Model (ONNX format)
+# Auto-downloaded on first request if not present
+YOLO_MODEL=yolov8n.onnx
 
 # External APIs (Optional)
 WAQI_TOKEN=  # Get from: https://aqicn.org/data-platform/token/
 ```
 
-### Modelli YOLO Disponibili
+### Modelli YOLO Disponibili (ONNX Format)
 
 | Modello | Size | Speed | Accuracy | CPU RAM |
 |---------|------|-------|----------|---------|
@@ -334,6 +335,9 @@ WAQI_TOKEN=  # Get from: https://aqicn.org/data-platform/token/
 | yolov8m | 50MB | ⚡⚡ | Very Good | Med |
 | yolov8l | 94MB | ⚡ | Excellent | Med-High |
 | yolov8x | 161MB | ⚡ | Best | High |
+
+> **Nota:** Il modello viene scaricato automaticamente al primo avvio.  
+> Per usare un modello diverso, scarica il file `.onnx` corrispondente e imposta `YOLO_MODEL` nel `.env`.
 
 ## 📚 Documenti Aggiuntivi
 
@@ -378,7 +382,7 @@ git push heroku main
 
 ## 📊 Performance
 
-### Benchmark (yolov8n on CPU)
+### Benchmark (yolov8n.onnx on CPU)
 
 | Metrica | Valore |
 |---------|--------|
@@ -402,7 +406,7 @@ netstat -ano | findstr :8000
 ```
 
 ### Analisi lenta
-- Usa modello più piccolo (yolov8n)
+- Usa modello più piccolo (yolov8n.onnx)
 - Riduci dimensione immagine
 - Usa GPU se disponibile
 

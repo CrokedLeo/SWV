@@ -12,7 +12,7 @@ class Settings:
     # App info
     APP_NAME = "SWV - Smart Vision"
     APP_VERSION = "2.0.0"
-    APP_DESCRIPTION = "Environmental Monitoring & Air Quality Analysis with YOLO"
+    APP_DESCRIPTION = "Environmental Monitoring & Air Quality Analysis"
     
     # Server
     HOST = os.getenv("HOST", "0.0.0.0")
@@ -21,7 +21,7 @@ class Settings:
     RELOAD = DEBUG
     
     # YOLO Model
-    YOLO_MODEL = os.getenv("YOLO_MODEL", "yolov8n.pt")
+    YOLO_MODEL = os.getenv("YOLO_MODEL", "yolov8n.onnx")
     CONFIDENCE_THRESHOLD = float(os.getenv("CONFIDENCE_THRESHOLD", 0.5))
     
     # API
