@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">SWV - Environmental Monitor</string>
+    <string name="title_home">Home</string>
+    <string name="btn_pick_image">Pick Image</string>
+    <string name="btn_take_photo">Take Photo</string>
+    <string name="btn_detect">Analyze Smoke</string>
+    <string name="msg_detecting">Analyzing environmental data...</string>
+    <string name="msg_detection_success">Analysis complete!</string>
+    <string name="msg_detection_error">Analysis failed. Please try again.</string>
+    <string name="msg_no_detections">No smoke detected.</string>
+    <string name="msg_loading_model">Loading analysis model...</string>
+    <string name="permission_camera">Camera permission required</string>
+    <string name="permission_storage">Storage permission required</string>
+    <string name="permission_location">Location permission required</string>
+    <string name="detection_results">Environmental Report</string>
+    <string name="objects_detected">Reports: %d</string>
+    <string name="processing_time">Processing time: %.2f ms</string>
+    <string name="confidence">Confidence: %.1f%%</string>
+    <string name="settings">Settings</string>
+    <string name="server_url">Server URL</string>
+    <string name="api_key">API Key</string>
+    <string name="confidence_threshold">Confidence Threshold</string>
+    <string name="save_settings">Save Settings</string>
+</resources>

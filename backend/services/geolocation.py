@@ -1,5 +1,5 @@
 """
-Geolocation and environmental data service
+Geolocation and environmental data service with resilience patterns
 """
 import logging
 import aiohttp
@@ -10,6 +10,13 @@ from datetime import datetime
 import asyncio
 
 from backend.models.schemas import GeoLocation, EnvironmentalData
+from backend.services.cache import cache_manager
+from backend.services.resilience import (
+    circuit_breaker,
+    retry_policy,
+    ErrorRecovery,
+    health_monitor
+)
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +26,6 @@ class GeolocationService:
     
     def __init__(self):
         self.geocoder = Nominatim(user_agent="swv_air_quality_monitor")
-        self.cache = {}  # Simple cache for coordinates
     
     def get_address_from_coordinates(
         self, 
@@ -29,27 +35,19 @@ class GeolocationService:
     ) -> GeoLocation:
         """
         Get address from coordinates using reverse geocoding
-        
-        Args:
-            latitude: Latitude coordinate
-            longitude: Longitude coordinate
-            accuracy: GPS accuracy in meters
-            
-        Returns:
-            GeoLocation object
+        With caching for performance
         """
         try:
-            # Check cache
-            cache_key = f"{latitude:.4f},{longitude:.4f}"
-            if cache_key in self.cache:
-                return self.cache[cache_key]
+            # Check cache first
+            cached = cache_manager.get_cached_geolocation(latitude, longitude)
+            if cached:
+                logger.info(f"✓ Geolocation cache HIT: ({latitude}, {longitude})")
+                return cached
             
             # Reverse geocode
             location = self.geocoder.reverse(f"{latitude}, {longitude}", language="it")
             
             # Parse address
-            address_parts = location.address.split(",")
-            
             geo_location = GeoLocation(
                 latitude=latitude,
                 longitude=longitude,
@@ -60,8 +58,9 @@ class GeolocationService:
                 accuracy_meters=accuracy
             )
             
-            # Cache result
-            self.cache[cache_key] = geo_location
+            # Cache for 24 hours
+            cache_manager.cache_geolocation(geo_location, latitude, longitude, ttl=86400)
+            logger.info(f"✓ Geolocation cache SET: ({latitude}, {longitude})")
             
             return geo_location
             
@@ -89,7 +88,6 @@ class GeolocationService:
     @staticmethod
     def _extract_region(address: str) -> Optional[str]:
         """Extract region/state from address string"""
-        # This is a simplified approach - in production, use proper parsing
         parts = address.split(",")
         if len(parts) >= 3:
             return parts[-2].strip()
@@ -133,7 +131,7 @@ class GeolocationService:
 
 
 class WeatherService:
-    """Fetch weather and environmental data from external APIs"""
+    """Fetch weather and environmental data from external APIs with resilience"""
     
     # Open-Meteo API (free, no key required)
     OPEN_METEO_API = "https://api.open-meteo.com/v1/forecast"
@@ -142,50 +140,119 @@ class WeatherService:
     AQI_API = "https://api.waqi.info/feed"
     
     @staticmethod
+    async def _fetch_weather_api(
+        latitude: float, 
+        longitude: float
+    ) -> Optional[EnvironmentalData]:
+        """Internal method to fetch weather from API (used by retry logic)"""
+        params = {
+            "latitude": latitude,
+            "longitude": longitude,
+            "current": "temperature_2m,relative_humidity_2m,apparent_temperature,weather,wind_speed_10m,visibility",
+            "timezone": "auto"
+        }
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                WeatherService.OPEN_METEO_API, 
+                params=params, 
+                timeout=aiohttp.ClientTimeout(total=10)
+            ) as response:
+                if response.status != 200:
+                    logger.warning(f"Weather API returned {response.status}")
+                    raise Exception(f"Weather API returned {response.status}")
+                
+                data = await response.json()
+                current = data.get("current", {})
+                
+                env_data = EnvironmentalData(
+                    temperature=current.get("temperature_2m"),
+                    humidity=current.get("relative_humidity_2m"),
+                    wind_speed=current.get("wind_speed_10m"),
+                    visibility=current.get("visibility")
+                )
+                
+                return env_data
+    
+    @staticmethod
     async def get_weather_data(
         latitude: float, 
         longitude: float
     ) -> Optional[EnvironmentalData]:
         """
-        Fetch current weather data from Open-Meteo API
+        Fetch current weather data from Open-Meteo API with retry + circuit breaker
         
-        Args:
-            latitude: Location latitude
-            longitude: Location longitude
-            
-        Returns:
-            EnvironmentalData object or None if failed
+        Flow:
+        1. Check cache first
+        2. Try API call with circuit breaker + retry
+        3. On failure: use cached data or return None
         """
+        endpoint = "weather_api"
+        
         try:
-            params = {
-                "latitude": latitude,
-                "longitude": longitude,
-                "current": "temperature_2m,relative_humidity_2m,apparent_temperature,weather,wind_speed_10m,visibility",
-                "timezone": "auto"
-            }
+            # Check cache first
+            cached = cache_manager.get_cached_weather(latitude, longitude)
+            if cached:
+                logger.info(f"✓ Weather cache HIT: ({latitude}, {longitude})")
+                return cached
             
-            async with aiohttp.ClientSession() as session:
-                async with session.get(WeatherService.OPEN_METEO_API, params=params, timeout=aiohttp.ClientTimeout(total=10)) as response:
-                    if response.status != 200:
-                        logger.warning(f"Weather API returned {response.status}")
-                        return None
-                    
-                    data = await response.json()
-                    current = data.get("current", {})
-                    
-                    return EnvironmentalData(
-                        temperature=current.get("temperature_2m"),
-                        humidity=current.get("relative_humidity_2m"),
-                        wind_speed=current.get("wind_speed_10m"),
-                        visibility=current.get("visibility")
-                    )
+            # Execute with circuit breaker + retry
+            env_data = await circuit_breaker.execute_async(
+                endpoint,
+                retry_policy.execute_async,
+                WeatherService._fetch_weather_api,
+                latitude,
+                longitude
+            )
+            
+            # Cache for 30 minutes
+            cache_manager.cache_weather(env_data, latitude, longitude, ttl=1800)
+            logger.info(f"✓ Weather cache SET: ({latitude}, {longitude})")
+            health_monitor.update_status("weather_api", True)
+            
+            return env_data
         
         except asyncio.TimeoutError:
-            logger.warning("Weather API timeout")
-            return None
+            logger.warning(f"✗ Weather API timeout for ({latitude}, {longitude})")
+            health_monitor.update_status("weather_api", False, error_message="Timeout")
+            # Fall back to cached data
+            return cache_manager.get_cached_weather(latitude, longitude)
+        
         except Exception as e:
-            logger.error(f"Failed to fetch weather data: {e}")
-            return None
+            logger.error(f"✗ Weather API failed: {str(e)[:100]}")
+            health_monitor.update_status("weather_api", False, error_message=str(e))
+            # Fall back to cached data
+            return cache_manager.get_cached_weather(latitude, longitude)
+    
+    @staticmethod
+    async def _fetch_aqi_api(
+        latitude: float,
+        longitude: float,
+        aqi_token: str
+    ) -> Optional[Dict[str, Any]]:
+        """Internal method to fetch AQI from API (used by retry logic)"""
+        params = {
+            "token": aqi_token,
+            "latlng": f"{latitude},{longitude}"
+        }
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                WeatherService.AQI_API, 
+                params=params, 
+                timeout=aiohttp.ClientTimeout(total=10)
+            ) as response:
+                if response.status != 200:
+                    logger.warning(f"AQI API returned {response.status}")
+                    raise Exception(f"AQI API returned {response.status}")
+                
+                data = await response.json()
+                
+                if data.get("status") != "ok":
+                    logger.warning("AQI API returned non-ok status")
+                    raise Exception("AQI API returned non-ok status")
+                
+                return data.get("data", {})
     
     @staticmethod
     async def get_aqi_data(
@@ -194,45 +261,40 @@ class WeatherService:
         aqi_token: Optional[str] = None
     ) -> Optional[Dict[str, Any]]:
         """
-        Fetch AQI data from WAQI API
+        Fetch AQI data from WAQI API with retry + circuit breaker
         
-        Args:
-            latitude: Location latitude
-            longitude: Location longitude
-            aqi_token: WAQI API token (optional)
-            
-        Returns:
-            AQI data dictionary or None
+        Flow:
+        1. Try API call with circuit breaker + retry
+        2. On failure: graceful degradation (return None)
         """
         if not aqi_token:
-            logger.info("AQI token not provided, skipping external AQI data")
+            logger.debug("AQI token not provided, skipping external AQI data")
             return None
+        
+        endpoint = "aqi_api"
         
         try:
-            params = {
-                "token": aqi_token,
-                "latlng": f"{latitude},{longitude}"
-            }
+            # Execute with circuit breaker + retry
+            aqi_data = await circuit_breaker.execute_async(
+                endpoint,
+                retry_policy.execute_async,
+                WeatherService._fetch_aqi_api,
+                latitude,
+                longitude,
+                aqi_token
+            )
             
-            async with aiohttp.ClientSession() as session:
-                async with session.get(WeatherService.AQI_API, params=params, timeout=aiohttp.ClientTimeout(total=10)) as response:
-                    if response.status != 200:
-                        logger.warning(f"AQI API returned {response.status}")
-                        return None
-                    
-                    data = await response.json()
-                    
-                    if data.get("status") != "ok":
-                        logger.warning("AQI API returned non-ok status")
-                        return None
-                    
-                    return data.get("data", {})
+            health_monitor.update_status("aqi_api", True)
+            return aqi_data
         
         except asyncio.TimeoutError:
-            logger.warning("AQI API timeout")
+            logger.warning(f"✗ AQI API timeout for ({latitude}, {longitude})")
+            health_monitor.update_status("aqi_api", False, error_message="Timeout")
             return None
+        
         except Exception as e:
-            logger.error(f"Failed to fetch AQI data: {e}")
+            logger.error(f"✗ AQI API failed: {str(e)[:100]}")
+            health_monitor.update_status("aqi_api", False, error_message=str(e))
             return None
 
 
@@ -253,16 +315,28 @@ class EnvironmentalDataService:
         """
         Get complete environmental data for a location
         
+        Now uses parallel requests instead of sequential
+        
         Returns:
             Tuple of (GeoLocation, EnvironmentalData, AQI_data)
         """
-        # Get location info
+        # Get location info (sync, already cached)
         geo_location = self.geo_service.get_address_from_coordinates(latitude, longitude, accuracy)
         
-        # Get weather data (async)
-        environmental_data = await self.weather_service.get_weather_data(latitude, longitude)
+        # Get weather and AQI data in parallel (much faster!)
+        weather_task = self.weather_service.get_weather_data(latitude, longitude)
+        aqi_task = self.weather_service.get_aqi_data(latitude, longitude, self.aqi_token)
         
-        # Get AQI data (async)
-        aqi_data = await self.weather_service.get_aqi_data(latitude, longitude, self.aqi_token)
+        # Wait for both concurrently
+        environmental_data, aqi_data = await asyncio.gather(weather_task, aqi_task, return_exceptions=True)
+        
+        # Handle exceptions
+        if isinstance(environmental_data, Exception):
+            logger.error(f"Weather fetch error: {environmental_data}")
+            environmental_data = None
+        if isinstance(aqi_data, Exception):
+            logger.error(f"AQI fetch error: {aqi_data}")
+            aqi_data = None
         
         return geo_location, environmental_data, aqi_data
+

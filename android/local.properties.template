@@ -1,0 +1,9 @@
+# This file must point to the Android SDK on your machine.
+# Example for Windows:
+# sdk.dir=C:\\Users\\YourName\\AppData\\Local\\Android\\Sdk
+#
+# Example for macOS:
+# sdk.dir=/Users/YourName/Library/Android/sdk
+#
+# Example for Linux:
+# sdk.dir=/home/YourName/Android/Sdk

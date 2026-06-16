@@ -1,5 +1,5 @@
 """
-YOLO detection service
+YOLO detection service with resilience patterns
 """
 import logging
 import time
@@ -9,6 +9,8 @@ import numpy as np
 from ultralytics import YOLO
 from pathlib import Path
 import uuid
+
+from backend.services.resilience import circuit_breaker, health_monitor
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +39,7 @@ class YOLODetector:
     
     def detect(self, image: np.ndarray, conf: float = 0.5) -> Tuple[List[dict], float, Tuple[int, int]]:
         """
-        Run detection on image
+        Run detection on image with circuit breaker protection
         
         Args:
             image: Input image as numpy array
@@ -45,10 +47,23 @@ class YOLODetector:
             
         Returns:
             Tuple of (detections, processing_time_ms, (width, height))
+            
+        Raises:
+            RuntimeError if circuit is open (service overloaded)
+            Exception if detection fails after circuit checks
         """
-        start_time = time.time()
+        endpoint = "yolo_inference"
         
         try:
+            # Check circuit breaker before executing
+            if not circuit_breaker.can_execute(endpoint):
+                raise RuntimeError(
+                    f"YOLO inference circuit breaker is OPEN. "
+                    f"Service overloaded. Please retry after 30 seconds."
+                )
+            
+            start_time = time.time()
+            
             # Run inference
             results = self._model(image, conf=conf, verbose=False)
             processing_time = (time.time() - start_time) * 1000
@@ -78,10 +93,28 @@ class YOLODetector:
                         detections.append(detection)
             
             img_height, img_width = image.shape[:2]
+            
+            # Record success
+            circuit_breaker.record_success(endpoint)
+            health_monitor.update_status(
+                "yolo_inference",
+                True,
+                details={"processing_time_ms": processing_time, "detections": len(detections)}
+            )
+            
             return detections, processing_time, (img_width, img_height)
             
         except Exception as e:
-            logger.error(f"Detection failed: {e}")
+            # Record failure for circuit breaker
+            circuit_breaker.record_failure(endpoint)
+            
+            error_msg = str(e)[:100]
+            logger.error(f"✗ YOLO detection failed: {error_msg}")
+            health_monitor.update_status(
+                "yolo_inference",
+                False,
+                error_message=error_msg
+            )
             raise
 
 

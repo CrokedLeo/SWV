@@ -1,5 +1,5 @@
 """
-FastAPI main application
+FastAPI main application with security hardening
 """
 import logging
 from contextlib import asynccontextmanager
@@ -12,9 +12,18 @@ from fastapi.staticfiles import StaticFiles
 import uvicorn
 
 from backend.config.settings import settings
+from backend.config.security import security_config
+from backend.middleware.security_headers import (
+    SecurityHeadersMiddleware,
+    HTTPSRedirectMiddleware,
+    OriginValidationMiddleware
+)
 from backend.routes.detection import router as detection_router
 from backend.routes.environmental import router as environmental_router
+from backend.routes.monitoring import router as monitoring_router
+from backend.routes.health import router as health_router
 from backend.models.schemas import ErrorResponse
+from backend.models.database import init_db
 
 # Configure logging
 logging.basicConfig(
@@ -33,8 +42,21 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     """Startup and shutdown events"""
     logger.info(f"Starting {settings.APP_NAME} v{settings.APP_VERSION}")
+    logger.info(f"Environment: {security_config.get_environment_name()}")
+    logger.info(f"HTTPS Enforcement: {'ENABLED' if security_config.should_force_https() else 'DISABLED'}")
+    logger.info(f"CORS Origins: {security_config.CORS_ALLOWED_ORIGINS}")
     logger.info(f"Environmental Monitoring Mode: ENABLED")
     logger.info(f"YOLO Model: {settings.YOLO_MODEL}")
+    logger.info(f"Caching: ENABLED")
+    logger.info(f"Rate Limiting: ENABLED")
+    
+    # Initialize database
+    try:
+        init_db()
+        logger.info("Database initialized successfully")
+    except Exception as e:
+        logger.error(f"Failed to initialize database: {e}", exc_info=True)
+    
     yield
     logger.info(f"Shutting down {settings.APP_NAME}")
 
@@ -50,13 +72,27 @@ app = FastAPI(
     redoc_url="/api/redoc"
 )
 
-# CORS middleware
+# ===== SECURITY MIDDLEWARE STACK =====
+# Order matters! Add middlewares in reverse order of execution
+
+# 1. HTTPS Redirect Middleware (redirect HTTP to HTTPS in production)
+app.add_middleware(HTTPSRedirectMiddleware)
+
+# 2. Origin Validation Middleware (log suspicious requests)
+app.add_middleware(OriginValidationMiddleware)
+
+# 3. Security Headers Middleware (add security headers to responses)
+app.add_middleware(SecurityHeadersMiddleware)
+
+# 4. CORS Middleware (handle cross-origin requests)
+cors_config = security_config.get_cors_config()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.CORS_ORIGINS,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=cors_config["allow_origins"],
+    allow_credentials=cors_config["allow_credentials"],
+    allow_methods=cors_config["allow_methods"],
+    allow_headers=cors_config["allow_headers"],
+    max_age=cors_config["max_age"],
 )
 
 
@@ -91,7 +127,10 @@ async def root():
             "Air quality indexing",
             "Geographic data integration",
             "Comprehensive environmental reports",
-            "Health recommendations"
+            "Health recommendations",
+            "Performance monitoring",
+            "Request caching",
+            "Rate limiting"
         ]
     }
 
@@ -99,6 +138,8 @@ async def root():
 # Include routers
 app.include_router(detection_router)
 app.include_router(environmental_router)
+app.include_router(monitoring_router)
+app.include_router(health_router)
 
 
 if __name__ == "__main__":
