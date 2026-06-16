@@ -1,0 +1,27 @@
+version: '3.9'
+
+services:
+  api:
+    build: .
+    container_name: swv-api
+    ports:
+      - "8000:8000"
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8000
+      - DEBUG=false
+      - YOLO_MODEL=yolov8n.pt
+      - CONFIDENCE_THRESHOLD=0.5
+      - API_KEY=your-secret-key-change-in-production
+      - CORS_ORIGINS=*
+      - LOG_LEVEL=INFO
+    volumes:
+      - ./uploads:/app/uploads
+      - ./app.log:/app/app.log
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/api/v1/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
