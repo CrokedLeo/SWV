@@ -282,7 +282,7 @@ Edit .env file (copy from .env.example):
 
   # Required
   API_KEY=your-secret-key-change-in-production
-  YOLO_MODEL=yolov8n.pt
+  YOLO_MODEL=yolov8n.onnx
   
   # Optional
   WAQI_TOKEN=  # Get from: https://aqicn.org/data-platform/token/
@@ -373,7 +373,7 @@ Q: "Port 8000 already in use"
 A: Use different port: python -m uvicorn backend.main:app --port 8001
 
 Q: "YOLO model download fails"
-A: Manually download: python -c "from ultralytics import YOLO; YOLO('yolov8n.pt')"
+A: Manually download: python scripts/download_model.py
 
 Q: "Slow analysis"
 A: Use smaller YOLO model (yolov8n is fastest)
@@ -398,7 +398,8 @@ A: Check API_KEY in request header matches settings
 
 About the Project:
   • FastAPI:        https://fastapi.tiangolo.com/
-  • YOLO v8:        https://github.com/ultralytics/ultralytics
+   • ONNX Runtime:   https://onnxruntime.ai/
+   • YOLO v8:        https://docs.ultralytics.com/
   • Python:         https://www.python.org/
   • Docker:         https://www.docker.com/
 
