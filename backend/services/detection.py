@@ -1,6 +1,6 @@
 """
-YOLO detection service using ONNX Runtime (Apache 2.0 licensed)
-No AGPL/GPL dependencies - uses pre-exported ONNX model
+YOLO detection service using ONNX Runtime (Apache 2.0).
+The YOLOv8 model weights are from Ultralytics and are subject to their license.
 """
 import logging
 import time

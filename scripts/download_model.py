@@ -1,7 +1,7 @@
 """
 Download YOLO ONNX model for SWV
-The model is licensed under Apache 2.0 (ONNX Runtime) and uses
-a pre-exported YOLOv8 ONNX model file.
+Uses ONNX Runtime (Apache 2.0) for inference.
+The YOLOv8 ONNX model is provided by Ultralytics under their license terms.
 """
 import sys
 import os
